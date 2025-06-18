@@ -1,0 +1,1 @@
+# clip-zero-shot-eval
