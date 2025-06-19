@@ -1,0 +1,48 @@
+# CLIP model configuration
+clip_model: "ViT-B/32"  # Options: RN50, RN101, RN50x4, RN50x16, ViT-B/32, ViT-B/16, ViT-L/14
+device: "cuda"  # cuda or cpu
+use_ensemble: true  # Whether to use multiple templates for text encoding
+
+# Evaluation settings
+batch_size: 32
+num_workers: 4
+save_predictions: false  # Save individual predictions (large files)
+
+# Output settings
+output_dir: "./results/clip_evaluation"
+save_results: true
+
+# Dataset configurations
+datasets:
+  # CIFAR-10 dataset
+  - name: "CIFAR10"
+    type: "cifar10"
+    root_path: "./data/cifar10"
+    split: "test"  # train or test
+#
+#  # ImageNet dataset
+#  - name: "ImageNet"
+#    type: "imagenet"
+#    root_path: "/path/to/imagenet"
+#    split: "val"
+#    class_map_file: "/path/to/imagenet/class_map.json"  # Optional
+#
+#  # Custom JSON format dataset
+#  - name: "CustomDataset"
+#    type: "custom"
+#    root_path: "/path/to/custom/dataset"
+#    split: "test"
+#    annotation_file: "/path/to/custom/dataset/test_annotations.json"
+#    annotation_format: "json"  # json, csv, or txt
+#    image_key: "image_path"
+#    label_key: "category"
+#
+#  # Custom CSV format dataset
+#  - name: "CSVDataset"
+#    type: "custom"
+#    root_path: "/path/to/csv/dataset"
+#    annotation_file: "/path/to/csv/dataset/labels.csv"
+#    annotation_format: "csv"
+#    image_dir: "/path/to/csv/dataset/images"
+#    image_key: "filename"
+#    label_key: "class_name"
