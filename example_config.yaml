@@ -19,30 +19,30 @@ datasets:
     type: "cifar10"
     root_path: "./data/cifar10"
     split: "test"  # train or test
-#
-#  # ImageNet dataset
-#  - name: "ImageNet"
-#    type: "imagenet"
-#    root_path: "/path/to/imagenet"
-#    split: "val"
-#    class_map_file: "/path/to/imagenet/class_map.json"  # Optional
-#
-#  # Custom JSON format dataset
-#  - name: "CustomDataset"
-#    type: "custom"
-#    root_path: "/path/to/custom/dataset"
-#    split: "test"
-#    annotation_file: "/path/to/custom/dataset/test_annotations.json"
-#    annotation_format: "json"  # json, csv, or txt
-#    image_key: "image_path"
-#    label_key: "category"
-#
-#  # Custom CSV format dataset
-#  - name: "CSVDataset"
-#    type: "custom"
-#    root_path: "/path/to/csv/dataset"
-#    annotation_file: "/path/to/csv/dataset/labels.csv"
-#    annotation_format: "csv"
-#    image_dir: "/path/to/csv/dataset/images"
-#    image_key: "filename"
-#    label_key: "class_name"
+
+  # ImageNet dataset
+  - name: "ImageNet"
+    type: "imagenet"
+    root_path: "/path/to/imagenet"
+    split: "val"
+    class_map_file: "/path/to/imagenet/class_map.json"  # Optional
+
+  # Custom JSON format dataset
+  - name: "CustomDataset"
+    type: "custom"
+    root_path: "/path/to/custom/dataset"
+    split: "test"
+    annotation_file: "/path/to/custom/dataset/test_annotations.json"
+    annotation_format: "json"  # json, csv, or txt
+    image_key: "image_path"
+    label_key: "category"
+
+  # Custom CSV format dataset
+  - name: "CSVDataset"
+    type: "custom"
+    root_path: "/path/to/csv/dataset"
+    annotation_file: "/path/to/csv/dataset/labels.csv"
+    annotation_format: "csv"
+    image_dir: "/path/to/csv/dataset/images"
+    image_key: "filename"
+    label_key: "class_name"
