@@ -1,0 +1,19 @@
+clip_model: ViT-B/32
+device: cuda
+use_ensemble: true
+batch_size: 32
+num_workers: 4
+save_predictions: false
+output_dir: ./results/cifar100_evaluation
+save_results: true
+datasets:
+- name: CIFAR100_Fine
+  type: cifar100
+  root_path: ./data/cifar100
+  split: test
+  use_coarse_labels: false
+- name: CIFAR100_Coarse
+  type: cifar100
+  root_path: ./data/cifar100
+  split: test
+  use_coarse_labels: true

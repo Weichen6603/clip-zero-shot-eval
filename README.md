@@ -5,7 +5,7 @@ A flexible framework for evaluating CLIP models on zero-shot classification task
 ## Features
 
 - **Modular Design**: Easy to add new datasets through adapter pattern
-- **Multiple Dataset Support**: Built-in support for CIFAR-10, ImageNet, and custom formats
+- **Multiple Dataset Support**: Built-in support for CIFAR-10, CIFAR-100, ImageNet, and custom formats
 - **Flexible Configuration**: YAML-based configuration for experiments
 - **Comprehensive Metrics**: Accuracy, top-5 accuracy, per-class accuracy, confusion matrices
 - **Template Ensemble**: Support for multiple prompt templates to improve performance
@@ -55,6 +55,31 @@ DatasetFactory.register_adapter('mydataset', MyDatasetAdapter)
 ## Configuration Options
 
 See `example_config.yaml` for all available options.
+
+### Supported Datasets
+
+#### CIFAR-10
+- **Classes**: 10 basic categories (airplane, automobile, bird, cat, deer, dog, frog, horse, ship, truck)
+- **Images**: 32x32 color images, 10,000 test samples
+- **Usage**: `type: "cifar10"`
+
+#### CIFAR-100
+- **Fine Labels**: 100 detailed classes (apple, aquarium_fish, baby, bear, etc.)
+- **Coarse Labels**: 20 superclasses (aquatic_mammals, fish, flowers, etc.)
+- **Images**: 32x32 color images, 10,000 test samples
+- **Usage**: 
+  - Fine-grained: `type: "cifar100"`, `use_coarse_labels: false`
+  - Coarse-grained: `type: "cifar100"`, `use_coarse_labels: true`
+
+#### ImageNet
+- **Classes**: 1000 object classes
+- **Images**: Variable size color images
+- **Usage**: `type: "imagenet"`
+
+#### Custom Datasets
+- **Formats**: JSON, CSV, TXT annotations
+- **Flexible**: Configurable image and label keys
+- **Usage**: `type: "custom"`
 
 ## Output Structure
 

@@ -5,7 +5,6 @@
 import torch
 import clip
 from typing import List, Dict, Any, Tuple
-import numpy as np
 from tqdm import tqdm
 
 
@@ -49,7 +48,7 @@ class CLIPZeroShotClassifier:
         Returns:
             Tensor of shape (num_classes, embed_dim) containing normalized text features
         """
-        # Create cache key
+        # Create the cache key
         cache_key = (tuple(classes), tuple(templates))
         if cache_key in self._text_features_cache:
             return self._text_features_cache[cache_key]

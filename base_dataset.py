@@ -6,8 +6,7 @@ from abc import ABC, abstractmethod
 from torch.utils.data import Dataset
 import torch
 from PIL import Image
-from typing import Dict, Tuple, Any, List, Optional
-import os
+from typing import Dict, Tuple, Any, List
 
 class BaseDatasetAdapter(ABC, Dataset):
     """Base class for all dataset adapters.

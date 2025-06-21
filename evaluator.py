@@ -4,13 +4,12 @@
 
 import torch
 from torch.utils.data import DataLoader
-from typing import Dict, List, Any, Optional
-import numpy as np
+from typing import Dict, Any, Optional
 from tqdm import tqdm
 import json
 import os
 from datetime import datetime
-from sklearn.metrics import confusion_matrix, classification_report
+from sklearn.metrics import confusion_matrix
 
 from base_dataset import BaseDatasetAdapter
 from clip_classifier import CLIPZeroShotClassifier

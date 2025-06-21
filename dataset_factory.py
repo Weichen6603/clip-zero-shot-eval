@@ -6,6 +6,7 @@ from typing import Dict, Any, Type, List
 from base_dataset import BaseDatasetAdapter
 from dataset_adapters import (
     CIFAR10Adapter,
+    CIFAR100Adapter,
     ImageNetAdapter,
     CustomDatasetAdapter
 )
@@ -16,11 +17,10 @@ class DatasetFactory:
 
     This factory manages the registration and creation of dataset adapters,
     allowing easy extension with new dataset types.
-    """
-
-    # Registry of available dataset adapters
+    """    # Registry of available dataset adapters
     _adapters: Dict[str, Type[BaseDatasetAdapter]] = {
         'cifar10': CIFAR10Adapter,
+        'cifar100': CIFAR100Adapter,
         'imagenet': ImageNetAdapter,
         'custom': CustomDatasetAdapter,
     }

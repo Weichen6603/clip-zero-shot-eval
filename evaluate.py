@@ -13,9 +13,6 @@ classification evaluation, and saves results.
 import argparse
 import os
 import sys
-from typing import Dict
-
-import torch
 
 from dataset_factory import DatasetFactory
 from evaluator import ZeroShotEvaluator

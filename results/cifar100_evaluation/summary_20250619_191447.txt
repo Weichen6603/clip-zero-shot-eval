@@ -1,0 +1,17 @@
+Zero-Shot Classification Results Summary
+============================================================
+
+Model Information:
+  model_name: ViT-B/32
+  device: cuda
+  use_ensemble: True
+  vision_width: 224
+  vision_layers: 12
+  embed_dim: 512
+
+Dataset Results:
+------------------------------------------------------------
+Dataset                        Accuracy   Top-5      Per-Class 
+------------------------------------------------------------
+CIFAR100_Fine                  63.96      88.11      63.96     
+CIFAR100_Coarse                49.97      90.29      49.97     
