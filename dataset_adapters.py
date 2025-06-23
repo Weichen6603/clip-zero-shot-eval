@@ -423,3 +423,192 @@ class CustomDatasetAdapter(BaseDatasetAdapter):
             "a clear photo of a {}.",
             "a good example of a {}.",
         ]
+
+
+class SUN397Adapter(BaseDatasetAdapter):
+    """Adapter for SUN397 dataset using Hugging Face Datasets."""
+
+    def _load_data(self, use_huggingface=True, **kwargs):
+        """Load SUN397 data using Hugging Face Datasets.
+        
+        Args:
+            use_huggingface: Use Hugging Face datasets (recommended)
+        """
+        if use_huggingface:
+            return self._load_data_huggingface(**kwargs)
+        else:
+            return self._load_data_tensorflow(**kwargs)
+    
+    def _load_data_huggingface(self, test_split_ratio=0.2, **kwargs):
+        """Load SUN397 data using Hugging Face Datasets.
+        
+        Args:
+            test_split_ratio: Ratio to split train data into train/test (default: 0.2)
+        """
+        try:
+            from datasets import load_dataset
+            from PIL import Image
+        except ImportError as e:
+            raise ImportError(
+                "Hugging Face datasets is required for SUN397 dataset. "
+                "Install it with: pip install datasets"
+            ) from e
+
+        try:
+            print("Loading SUN397 dataset from Hugging Face...")
+            
+            # Handle different split requests
+            if self.split == 'test':
+                # Load full train dataset and split it
+                print("Note: SUN397 only has 'train' split. Creating test split from training data...")
+                dataset = load_dataset("1aurent/SUN397", split='train', cache_dir=self.root_path)
+                
+                # Split the dataset
+                train_test_split = dataset.train_test_split(test_size=test_split_ratio, shuffle=True, seed=42)
+                dataset = train_test_split['test']  # Use test portion
+                print(f"Using test split ({len(dataset)} samples) from training data")
+                
+            elif self.split == 'train':
+                # Load full train dataset
+                dataset = load_dataset("1aurent/SUN397", split='train', cache_dir=self.root_path)
+                
+                # Optionally split to keep only training portion
+                if test_split_ratio > 0:
+                    train_test_split = dataset.train_test_split(test_size=test_split_ratio, shuffle=True, seed=42)
+                    dataset = train_test_split['train']  # Use train portion
+                    print(f"Using train split ({len(dataset)} samples) from training data")
+                else:
+                    print(f"Using full dataset ({len(dataset)} samples)")
+            else:
+                # Fallback: use available split
+                print(f"Warning: Split '{self.split}' not available. Using 'train' split.")
+                dataset = load_dataset("1aurent/SUN397", split='train', cache_dir=self.root_path)
+            
+            data = []
+            print(f"Processing {len(dataset)} samples...")
+            
+            # Convert Hugging Face dataset to our format
+            for idx, item in enumerate(dataset):
+                # Extract image and label
+                image = item['image']  # PIL Image
+                label = item['label']  # Class name string
+                
+                data.append({
+                    'image_path': idx,  # We'll handle this in __getitem__
+                    'label': label,
+                    '_pil_image': image  # Store PIL image directly
+                })
+                
+                # Show progress for large datasets
+                if (idx + 1) % 1000 == 0:
+                    print(f"Processed {idx + 1} samples...")
+            
+            print(f"✓ Successfully loaded {len(data)} samples from Hugging Face")
+            return data
+            
+        except Exception as e:
+            raise RuntimeError(
+                f"Failed to load SUN397 dataset from Hugging Face: {str(e)}\n"
+                "Please check your internet connection and try again."
+            ) from e
+    
+    def _load_data_tensorflow(self, **kwargs):
+        """Fallback: Load SUN397 data using TensorFlow Datasets."""
+        try:
+            import tensorflow_datasets as tfds
+            import tensorflow as tf
+            from PIL import Image
+            import numpy as np
+        except ImportError as e:
+            raise ImportError(
+                "TensorFlow Datasets is required for SUN397 dataset fallback. "
+                "Install it with: pip install tensorflow-datasets"
+            ) from e
+
+        # This is the old implementation - kept as fallback
+        try:
+            ds = tfds.load('sun397', split=self.split, as_supervised=True, 
+                          data_dir=self.root_path, download=True)
+            
+            # Get dataset info for class names
+            builder = tfds.builder('sun397', data_dir=self.root_path)
+            info = builder.info
+            
+            data = []
+            for idx, (image_tensor, label_tensor) in enumerate(ds):
+                image_np = image_tensor.numpy()
+                label_idx = label_tensor.numpy()
+                image_pil = Image.fromarray(image_np)
+                class_name = info.features['label'].int2str(label_idx)
+                
+                data.append({
+                    'image_path': idx,
+                    'label': class_name,
+                    '_pil_image': image_pil
+                })
+            
+            return data
+            
+        except Exception as e:
+            raise RuntimeError(
+                "Both Hugging Face and TensorFlow Datasets failed to load SUN397. "
+                f"Last error: {str(e)}"
+            ) from e
+
+    def _get_classes(self) -> List[str]:
+        """Get SUN397 class names."""
+        # Extract unique classes from loaded data
+        if hasattr(self, 'data') and self.data:
+            classes = sorted(list(set(item['label'] for item in self.data)))
+            return classes
+        
+        # Fallback: try to get from Hugging Face dataset info
+        try:
+            from datasets import load_dataset
+            dataset = load_dataset("1aurent/SUN397", split="train[:1]", cache_dir=self.root_path)
+            # Get all unique labels from a small sample
+            dataset_full = load_dataset("1aurent/SUN397", cache_dir=self.root_path)
+            all_labels = set()
+            for split_data in dataset_full.values():
+                for item in split_data:
+                    all_labels.add(item['label'])
+            return sorted(list(all_labels))
+        except:
+            # Ultimate fallback
+            return [f"class_{i}" for i in range(397)]
+
+    def get_templates(self) -> List[str]:
+        """Templates for SUN397 scene classification."""
+        return [
+            "a photo of a {}.",
+            "a picture of a {}.",
+            "an image of a {}.",
+            "a photograph of a {}.",
+            "a scene of a {}.",
+            "a view of a {}.",
+            "this is a {}.",
+            "this shows a {}.",
+            "a photo taken in a {}.",
+            "a photo taken at a {}.",
+            "an outdoor photo of a {}.",
+            "an indoor photo of a {}.",
+            "a scenic view of a {}.",
+            "a landscape photo of a {}.",
+            "architecture photo of a {}.",
+            "a wide shot of a {}.",
+            "a close-up of a {}.",
+            "a detailed view of a {}.",
+            "a beautiful photo of a {}.",
+            "a typical {}.",
+        ]
+
+    def __getitem__(self, idx: int) -> tuple:
+        """Override to handle PIL images stored in data."""
+        item = self.data[idx]
+        image = item['_pil_image']
+
+        if self.transform:
+            image = self.transform(image)
+
+        label = self.class_to_idx[item['label']]
+        return image, label

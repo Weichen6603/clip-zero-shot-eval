@@ -1,8 +1,9 @@
 # PyTorch with CUDA 12.8 support (official latest)
 # Install with: pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
-torch
-torchvision
-torchaudio
+--extra-index-url https://download.pytorch.org/whl/cu128
+torch==2.7.1+cu128
+torchvision==0.22.1+cu128
+torchaudio==2.7.1+cu128 
 
 # CLIP model
 clip @ git+https://github.com/openai/CLIP.git
@@ -15,6 +16,9 @@ pandas>=2.0.0
 
 # Image processing
 Pillow>=10.0.0
+
+# Hugging Face Datasets
+datasets>=2.0.0
 
 # Utilities
 tqdm>=4.65.0

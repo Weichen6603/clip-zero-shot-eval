@@ -1,0 +1,20 @@
+dataset:
+  type: sun397
+  root_path: "./data"  # Directory where Hugging Face datasets will cache data
+  split: train         # SUN397 only has 'train' split available on Hugging Face
+
+model:
+  name: "ViT-B/32"
+  device: "cuda"       # Use "cpu" if no GPU available
+
+evaluation:
+  batch_size: 64
+  num_workers: 4
+  save_results: true
+  results_dir: "./results/sun397_evaluation"
+
+# Optional: Override default templates
+# templates:
+#   - "a photo of a {}."
+#   - "a scene of a {}."
+#   - "a view of a {}."

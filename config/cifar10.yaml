@@ -9,7 +9,7 @@ num_workers: 4
 save_predictions: false  # Save individual predictions (large files)
 
 # Output settings
-output_dir: "./results/clip_evaluation"
+output_dir: "./results/cifar10_evaluation"
 save_results: true
 
 # Dataset configurations

@@ -8,7 +8,8 @@ from dataset_adapters import (
     CIFAR10Adapter,
     CIFAR100Adapter,
     ImageNetAdapter,
-    CustomDatasetAdapter
+    CustomDatasetAdapter,
+    SUN397Adapter
 )
 
 
@@ -23,6 +24,7 @@ class DatasetFactory:
         'cifar100': CIFAR100Adapter,
         'imagenet': ImageNetAdapter,
         'custom': CustomDatasetAdapter,
+        'sun397': SUN397Adapter,
     }
 
     @classmethod
