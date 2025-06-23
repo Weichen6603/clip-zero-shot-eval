@@ -59,3 +59,10 @@ datasets:
     root_path: "./data/cifar100"
     split: "test"  # train or test
     use_coarse_labels: true  # Use 20 coarse-grained classes
+
+  # SUN397 scene dataset (large dataset with memory optimization)
+  - name: "SUN397"
+    type: "sun397"
+    root_path: "./data/sun397"  # HuggingFace cache directory
+    split: "train"  # SUN397 only has train split, will auto-split for testing
+    # max_samples: 1000  # Optional: limit for testing, remove for full 87k evaluation

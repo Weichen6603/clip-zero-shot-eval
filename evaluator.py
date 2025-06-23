@@ -96,10 +96,16 @@ class ZeroShotEvaluator:
         # Concatenate all results
         all_predictions = torch.cat(all_predictions)
         all_labels = torch.cat(all_labels)
-        all_similarities = torch.cat(all_similarities)
-
-        # Compute metrics
+        all_similarities = torch.cat(all_similarities)        # Compute metrics
         accuracy = (all_predictions == all_labels).float().mean().item()
+        
+        print(f"Debug info:")
+        print(f"  all_predictions shape: {all_predictions.shape}")
+        print(f"  all_labels shape: {all_labels.shape}")
+        print(f"  all_similarities shape: {all_similarities.shape}")
+        print(f"  Sample prediction: {all_predictions[0].item()}")
+        print(f"  Sample label: {all_labels[0].item()}")
+        print(f"  Sample similarities (top 5): {all_similarities[0].argsort(descending=True)[:5]}")
 
         # Per-class accuracy
         per_class_correct = torch.zeros(len(classes))
@@ -110,9 +116,7 @@ class ZeroShotEvaluator:
             if pred == label:
                 per_class_correct[label] += 1
 
-        per_class_accuracy = per_class_correct / per_class_total.clamp(min=1)
-
-        # Top-k accuracy
+        per_class_accuracy = per_class_correct / per_class_total.clamp(min=1)        # Top-k accuracy
         top5_correct = 0
         for i, label in enumerate(all_labels):
             top5_preds = all_similarities[i].argsort(descending=True)[:5]
@@ -221,19 +225,17 @@ class ZeroShotEvaluator:
                 f.write("Model Information:\n")
                 for key, value in first_result['model_info'].items():
                     f.write(f"  {key}: {value}\n")
-                f.write("\n")
-
-            # Dataset results
+                f.write("\n")            # Dataset results
             f.write("Dataset Results:\n")
             f.write("-" * 60 + "\n")
             f.write(f"{'Dataset':<30} {'Accuracy':<10} {'Top-5':<10} {'Per-Class':<10}\n")
             f.write("-" * 60 + "\n")
-
+            
             for dataset_name, result in results.items():
                 if 'error' in result:
                     f.write(f"{dataset_name:<30} {'ERROR':<10} {'-':<10} {'-':<10}\n")
                 else:
-                    acc = result['accuracy'] * 100
-                    top5 = result['top5_accuracy'] * 100
-                    per_class = result['mean_per_class_accuracy'] * 100
+                    acc = result['accuracy']
+                    top5 = result['top5_accuracy'] 
+                    per_class = result['mean_per_class_accuracy']
                     f.write(f"{dataset_name:<30} {acc:<10.2f} {top5:<10.2f} {per_class:<10.2f}\n")

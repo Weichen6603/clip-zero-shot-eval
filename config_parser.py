@@ -87,10 +87,8 @@ class ConfigParser:
                 root_path=root_path,
                 split=split,
                 params=params
-            ))
-
-        # Create experiment config
-        return ExperimentConfig(
+            ))        # Create experiment config
+        config = ExperimentConfig(
             clip_model=config_dict.get('clip_model', 'ViT-B/32'),
             device=config_dict.get('device', 'cuda'),
             use_ensemble=config_dict.get('use_ensemble', True),
@@ -101,6 +99,13 @@ class ConfigParser:
             save_results=config_dict.get('save_results', True),
             datasets=datasets
         )
+        
+        # Add any additional configuration options
+        for key, value in config_dict.items():
+            if not hasattr(config, key):
+                setattr(config, key, value)
+        
+        return config
 
     @staticmethod
     def validate_config(config: ExperimentConfig) -> List[str]:

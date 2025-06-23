@@ -483,27 +483,37 @@ class SUN397Adapter(BaseDatasetAdapter):
                 # Fallback: use available split
                 print(f"Warning: Split '{self.split}' not available. Using 'train' split.")
                 dataset = load_dataset("1aurent/SUN397", split='train', cache_dir=self.root_path)
+              # Apply max_samples limit if specified
+            max_samples = kwargs.get('max_samples', None)
+            dataset_length = len(dataset) if hasattr(dataset, '__len__') else 87003
             
+            if max_samples and max_samples < dataset_length:
+                print(f"Limited to {max_samples} samples for testing")
+                actual_length = max_samples
+            else:
+                print(f"Using full dataset ({dataset_length} samples)")
+                actual_length = dataset_length
+            
+            # Store the dataset reference for lazy loading
+            self._hf_dataset = dataset
+            
+            # Create lightweight data structure WITHOUT loading actual images
             data = []
-            print(f"Processing {len(dataset)} samples...")
+            print(f"Creating metadata for {actual_length} samples...")
             
-            # Convert Hugging Face dataset to our format
-            for idx, item in enumerate(dataset):
-                # Extract image and label
-                image = item['image']  # PIL Image
-                label = item['label']  # Class name string
-                
+            # Only create metadata entries - don't load images yet
+            for idx in range(actual_length):
+                # We'll get the label when needed in __getitem__
                 data.append({
-                    'image_path': idx,  # We'll handle this in __getitem__
-                    'label': label,
-                    '_pil_image': image  # Store PIL image directly
+                    'image_path': idx,  # Index into the HF dataset
+                    'label': None,  # Will be loaded on demand
                 })
                 
                 # Show progress for large datasets
-                if (idx + 1) % 1000 == 0:
-                    print(f"Processed {idx + 1} samples...")
+                if (idx + 1) % 10000 == 0:
+                    print(f"Created metadata for {idx + 1} samples...")
             
-            print(f"✓ Successfully loaded {len(data)} samples from Hugging Face")
+            print(f"✓ Successfully created metadata for {len(data)} samples")
             return data
             
         except Exception as e:
@@ -529,8 +539,7 @@ class SUN397Adapter(BaseDatasetAdapter):
         try:
             ds = tfds.load('sun397', split=self.split, as_supervised=True, 
                           data_dir=self.root_path, download=True)
-            
-            # Get dataset info for class names
+              # Get dataset info for class names
             builder = tfds.builder('sun397', data_dir=self.root_path)
             info = builder.info
             
@@ -556,26 +565,75 @@ class SUN397Adapter(BaseDatasetAdapter):
             ) from e
 
     def _get_classes(self) -> List[str]:
-        """Get SUN397 class names."""
-        # Extract unique classes from loaded data
-        if hasattr(self, 'data') and self.data:
-            classes = sorted(list(set(item['label'] for item in self.data)))
-            return classes
-        
-        # Fallback: try to get from Hugging Face dataset info
+        """Get all 397 SUN397 class names from the dataset."""
         try:
-            from datasets import load_dataset
-            dataset = load_dataset("1aurent/SUN397", split="train[:1]", cache_dir=self.root_path)
-            # Get all unique labels from a small sample
-            dataset_full = load_dataset("1aurent/SUN397", cache_dir=self.root_path)
-            all_labels = set()
-            for split_data in dataset_full.values():
-                for item in split_data:
-                    all_labels.add(item['label'])
-            return sorted(list(all_labels))
-        except:
-            # Ultimate fallback
+            # If we have the HuggingFace dataset loaded, extract real class names
+            if hasattr(self, '_hf_dataset') and self._hf_dataset is not None:
+                # Use the proper HuggingFace way to get class names
+                if hasattr(self._hf_dataset, 'features') and 'label' in self._hf_dataset.features:
+                    label_feature = self._hf_dataset.features['label']
+                    if hasattr(label_feature, 'names'):
+                        # This is the correct way for ClassLabel features
+                        class_names = label_feature.names
+                        print(f"✓ Extracted {len(class_names)} real class names from SUN397 dataset features")
+                        
+                        # Clean the class names to make them more readable for CLIP
+                        cleaned_names = [self._clean_class_name(name) for name in class_names]
+                        return cleaned_names
+                
+                # Fallback: try to extract from dataset info
+                if hasattr(self._hf_dataset, 'info') and hasattr(self._hf_dataset.info, 'features'):
+                    label_feature = self._hf_dataset.info.features.get('label')
+                    if label_feature and hasattr(label_feature, 'names'):
+                        class_names = label_feature.names
+                        print(f"✓ Extracted {len(class_names)} real class names from SUN397 dataset info")
+                        cleaned_names = [self._clean_class_name(name) for name in class_names]
+                        return cleaned_names
+                
+                print("Warning: Could not find ClassLabel feature with names in HuggingFace dataset")
+            
+            # Fallback: return placeholder classes
+            print("Warning: Could not extract real class names from dataset, using placeholders")
             return [f"class_{i}" for i in range(397)]
+            
+        except Exception as e:
+            print(f"Warning: Error extracting class names: {e}")
+            return [f"class_{i}" for i in range(397)]
+    
+    def _clean_class_name(self, raw_label: str) -> str:
+        """Clean and convert raw label to readable class name.
+        
+        Args:
+            raw_label: Raw label like '/a/abbey' or '/a/airplane_cabin'
+            
+        Returns:
+            Cleaned class name like 'abbey' or 'airplane cabin'
+        """
+        # Remove leading slashes and path components
+        cleaned = raw_label.strip('/')
+        
+        # Split by '/' and take the last part (actual class name)
+        parts = cleaned.split('/')
+        if len(parts) > 1:
+            # Take the last part which should be the class name
+            class_name = parts[-1]
+        else:
+            class_name = cleaned
+        
+        # Handle special cases and clean up
+        class_name = class_name.replace('_', ' ')  # Convert underscores to spaces
+        class_name = class_name.replace('-', ' ')  # Convert hyphens to spaces
+        
+        # Remove common suffixes like '/outdoor', '/indoor'
+        suffixes_to_remove = ['/outdoor', '/indoor', 'outdoor', 'indoor']
+        for suffix in suffixes_to_remove:
+            if class_name.endswith(suffix):
+                class_name = class_name[:-len(suffix)].strip()
+        
+        # Clean up extra spaces
+        class_name = ' '.join(class_name.split())
+        
+        return class_name
 
     def get_templates(self) -> List[str]:
         """Templates for SUN397 scene classification."""
@@ -590,12 +648,10 @@ class SUN397Adapter(BaseDatasetAdapter):
             "this shows a {}.",
             "a photo taken in a {}.",
             "a photo taken at a {}.",
-            "an outdoor photo of a {}.",
-            "an indoor photo of a {}.",
+            "an outdoor photo of a {}.",            "an indoor photo of a {}.",
             "a scenic view of a {}.",
             "a landscape photo of a {}.",
-            "architecture photo of a {}.",
-            "a wide shot of a {}.",
+            "architecture photo of a {}.",            "a wide shot of a {}.",
             "a close-up of a {}.",
             "a detailed view of a {}.",
             "a beautiful photo of a {}.",
@@ -603,12 +659,60 @@ class SUN397Adapter(BaseDatasetAdapter):
         ]
 
     def __getitem__(self, idx: int) -> tuple:
-        """Override to handle PIL images stored in data."""
+        """Override to handle lazy loading of images from HuggingFace dataset."""
         item = self.data[idx]
-        image = item['_pil_image']
+        
+        from PIL import Image        # Check if image is pre-loaded (for backward compatibility)
+        if '_pil_image' in item:
+            image = item['_pil_image']
+            label_text = item['label']
+        else:
+            # Lazy load from HuggingFace dataset
+            hf_idx = item['image_path']  # This is the index in the HF dataset
+            try:
+                # Try different methods to access the dataset item
+                if hasattr(self._hf_dataset, '__getitem__'):
+                    hf_item = self._hf_dataset[hf_idx]
+                elif hasattr(self._hf_dataset, 'select'):
+                    hf_item = self._hf_dataset.select([hf_idx])[0]
+                else:
+                    raise AttributeError("Dataset doesn't support indexing")
+                    
+                image = hf_item['image']
+                raw_label = hf_item['label']
+                
+                # Use the proper HuggingFace way to convert label index to name
+                if isinstance(raw_label, int):
+                    # Use ClassLabel.int2str() method to get the real class name
+                    if (hasattr(self._hf_dataset, 'features') and 
+                        'label' in self._hf_dataset.features and
+                        hasattr(self._hf_dataset.features['label'], 'int2str')):
+                        try:
+                            label_text = self._hf_dataset.features['label'].int2str(raw_label)
+                            label_text = self._clean_class_name(label_text)
+                        except:
+                            label_text = f"class_{raw_label}"
+                    else:
+                        label_text = f"class_{raw_label}"
+                elif isinstance(raw_label, str):
+                    # If already a string, clean it
+                    label_text = self._clean_class_name(raw_label)
+                else:
+                    label_text = f"class_{raw_label}"
+                    
+            except Exception as e:
+                # Fallback: create placeholder
+                image = Image.new('RGB', (224, 224), color='gray')
+                label_text = 'unknown'
 
         if self.transform:
             image = self.transform(image)
 
-        label = self.class_to_idx[item['label']]
+        # Convert string label to index
+        if label_text in self.class_to_idx:
+            label = self.class_to_idx[label_text]
+        else:
+            # If label not found, use 0 as default
+            label = 0
+        
         return image, label

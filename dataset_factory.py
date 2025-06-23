@@ -57,21 +57,24 @@ class DatasetFactory:
             transform: Image transformations to apply
 
         Returns:
-            Initialized dataset adapter
-        """
+            Initialized dataset adapter        """
         # Make a copy to avoid modifying the original config
-        config = config.copy()
+        import copy
+        if hasattr(config, '__dict__'):
+            # If config is a dataclass object, get its dict representation
+            config_dict = copy.deepcopy(config.__dict__)
+        else:
+            # If config is already a dict, use it directly
+            config_dict = copy.deepcopy(config)
 
         # Extract dataset type
-        dataset_type = config.pop('type')
+        dataset_type = config_dict.pop('type')
         if dataset_type not in cls._adapters:
             raise ValueError(
                 f"Unknown dataset type: {dataset_type}. "
                 f"Available types: {cls.list_adapters()}"
-            )
-
-        # Get adapter class
+            )        # Get adapter class
         adapter_class = cls._adapters[dataset_type]
 
         # Create and return adapter instance
-        return adapter_class(transform=transform, **config)
+        return adapter_class(transform=transform, **config_dict)
