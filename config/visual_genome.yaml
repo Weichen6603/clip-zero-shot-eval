@@ -1,0 +1,24 @@
+# Visual Genome Configuration for CLIP Zero-Shot Evaluation
+
+# CLIP model configuration
+clip_model: "ViT-B/32"  # Options: RN50, RN101, RN50x4, RN50x16, ViT-B/32, ViT-B/16, ViT-L/14
+device: "cuda"  # cuda or cpu
+use_ensemble: true  # Whether to use multiple templates for text encoding
+
+# Evaluation settings - Ultra memory optimized
+batch_size: 32   # Reduced to 4 for ultra memory efficiency
+num_workers: 8  # Single worker to minimize memory overhead
+save_predictions: false  # Save individual predictions (large files)
+
+# Output settings
+output_dir: "./results/visual_genome_evaluation"
+save_results: true
+
+# Dataset configurations
+datasets:
+  # Visual Genome dataset - Object Classification
+  - name: "VisualGenome-Objects"
+    type: "visual_genome"
+    root_path: "/mnt/d/data/visual_genome"  # HuggingFace cache directory
+    split: "train"  # Will auto-split for evaluation
+  

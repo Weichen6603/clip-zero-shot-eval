@@ -172,6 +172,12 @@ def _register_adapters():
         DatasetAdapterRegistry.register('sun397', SUN397Adapter)
     except ImportError:
         pass
+    
+    try:
+        from adapters.visual_genome_adapter import VisualGenomeAdapter
+        DatasetAdapterRegistry.register('visual_genome', VisualGenomeAdapter)
+    except ImportError:
+        pass
 
 
 # Register adapters on import

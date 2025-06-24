@@ -14,7 +14,7 @@ A flexible framework for evaluating CLIP models on zero-shot classification task
 ## Features
 
 - **Modular Design**: Easy to add new datasets through adapter pattern with centralized template management
-- **Multiple Dataset Support**: Built-in support for CIFAR-10, CIFAR-100, SUN397, and ImageNet-1K
+- **Multiple Dataset Support**: Built-in support for CIFAR-10, CIFAR-100, SUN397, ImageNet-1K, and Visual Genome
 - **Large Dataset Optimization**: Memory-efficient lazy loading for large datasets
 - **Flexible Configuration**: YAML-based configuration for experiments
 - **Comprehensive Metrics**: Accuracy, top-5 accuracy, per-class accuracy, confusion matrices
@@ -66,7 +66,7 @@ python evaluate.py config.yaml
 
 3. **Run evaluation**:
    ```bash
-   python evaluate.py config/imagenet_config.yaml
+   python evaluate.py config/imagenet.yaml
    ```
 
 4. **View results**: Check `./results/imagenet_evaluation/` for detailed results
@@ -209,6 +209,39 @@ Monitor your system resources and adjust:
   - Initial download: ~30-40 minutes (one-time)
   - Evaluation speed: ~2000+ samples/sec on RTX 4070
   - Memory usage: ~6GB RAM, ~0.8GB GPU memory
+
+#### Visual Genome
+- **Classes**: Variable object classes extracted from scene annotations (10,000+ unique object names)
+- **Images**: Variable size color images with rich object annotations, ~108,000 images
+- **Source**: Visual Genome dataset via Hugging Face `visual_genome` dataset  
+- **Challenge**: Large-scale visual understanding with complex multi-object scenes
+- **Usage**: `type: "visual_genome"`
+- **Features**:
+  - Rich object annotations with bounding boxes and relationships
+  - Multi-label scenarios (multiple objects per image)
+  - Support for both object names and WordNet synsets
+  - Configurable object filtering (min/max objects per image)
+  - Memory-efficient lazy loading for large dataset
+- **Setup Requirements**:
+  1. **Installation**: `pip install datasets` (included in requirements.txt)
+  2. **Storage**: ~20GB+ cache space required for full dataset
+  3. **First-time download**: May take 1-2 hours depending on connection
+- **Configuration Example**:
+  ```yaml
+  - name: "VisualGenome-Objects"
+    type: "visual_genome"
+    root_path: "/mnt/d/data/visual_genome/cache"  # Cache directory
+    split: "train"  # Will auto-split for evaluation
+    max_samples: 10000  # Optional: limit for testing
+    min_objects: 1      # Minimum objects per image
+    max_objects: 20     # Maximum objects per image
+    use_synsets: false  # Use object names (true for WordNet synsets)
+  ```
+- **Performance Notes**:
+  - Large dataset with complex annotations
+  - Uses primary object label for zero-shot classification
+  - Recommended to start with limited samples for testing
+  - Memory usage varies with batch size and image complexity
 
 ## Output Structure
 

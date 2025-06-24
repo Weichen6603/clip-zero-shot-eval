@@ -11,10 +11,12 @@ from .cifar10_adapter import CIFAR10Adapter
 from .cifar100_adapter import CIFAR100Adapter
 from .imagenet_adapter import ImageNetAdapter
 from .sun397_adapter import SUN397Adapter
+from .visual_genome_adapter import VisualGenomeAdapter
 
 __all__ = [
     'CIFAR10Adapter',
     'CIFAR100Adapter', 
     'ImageNetAdapter',
-    'SUN397Adapter'
+    'SUN397Adapter',
+    'VisualGenomeAdapter'
 ]
