@@ -8,14 +8,13 @@ A flexible framework for evaluating CLIP models on zero-shot classification task
 - **Centralized Templates**: All prompt templates are now managed in `dataset_adapters.py` for consistency
 - **Modular Adapters**: Each dataset adapter is in its own file within the `adapters/` directory
 - **Auto-Registration**: New adapters are automatically discovered and registered
+- **ImageNet-1K Support**: Added complete support for official HuggingFace ImageNet-1K dataset
 - **Backward Compatible**: Existing configurations and usage remain unchanged
-
-See [ADAPTER_REFACTOR.md](ADAPTER_REFACTOR.md) for detailed migration guide and new architecture overview.
 
 ## Features
 
 - **Modular Design**: Easy to add new datasets through adapter pattern with centralized template management
-- **Multiple Dataset Support**: Built-in support for CIFAR-10, CIFAR-100, SUN397, and ImageNet
+- **Multiple Dataset Support**: Built-in support for CIFAR-10, CIFAR-100, SUN397, and ImageNet-1K
 - **Large Dataset Optimization**: Memory-efficient lazy loading for large datasets
 - **Flexible Configuration**: YAML-based configuration for experiments
 - **Comprehensive Metrics**: Accuracy, top-5 accuracy, per-class accuracy, confusion matrices
@@ -29,6 +28,23 @@ See [ADAPTER_REFACTOR.md](ADAPTER_REFACTOR.md) for detailed migration guide and 
 pip install -r requirements.txt
 ```
 
+### Additional Setup for ImageNet-1K
+
+ImageNet-1K requires additional authentication setup:
+
+```bash
+# Install HuggingFace Hub (if not already installed)
+pip install huggingface_hub
+
+# Login to HuggingFace
+huggingface-cli login
+
+# Request access to imagenet-1k dataset at:
+# https://huggingface.co/datasets/imagenet-1k
+```
+
+**Note**: You may need to wait for approval to access the ImageNet-1K dataset.
+
 ## Quick Start
 
 1. Prepare your configuration file (see `example_config.yaml`)
@@ -37,6 +53,23 @@ pip install -r requirements.txt
 ```bash
 python evaluate.py config.yaml
 ```
+
+### ImageNet-1K Quick Start
+
+1. **Setup authentication**:
+   ```bash
+   pip install huggingface_hub
+   huggingface-cli login
+   ```
+
+2. **Request dataset access**: Visit [imagenet-1k on HuggingFace](https://huggingface.co/datasets/imagenet-1k) and request access
+
+3. **Run evaluation**:
+   ```bash
+   python evaluate.py config/imagenet_config.yaml
+   ```
+
+4. **View results**: Check `./results/imagenet_evaluation/` for detailed results
 
 ## Adding New Datasets
 
@@ -112,17 +145,6 @@ This unified approach eliminates the need to choose different template sets and 
 
 See `example_config.yaml` for all available options.
 
-### Memory Optimization for Large Datasets
-
-For large datasets (like SUN397 with 87k samples), the framework uses memory-efficient strategies:
-
-- **Lazy Loading**: Images are loaded on-demand during evaluation, not pre-loaded into memory
-- **Batch Processing**: Configurable batch size to balance memory usage and GPU utilization
-- **Worker Optimization**: Adjustable number of data loading workers
-
-**Note**: Small datasets (CIFAR-10, CIFAR-100) use traditional pre-loading for optimal performance, while large datasets automatically use lazy loading to prevent memory issues.
-
-
 ### Performance Tuning
 
 Monitor your system resources and adjust:
@@ -161,39 +183,32 @@ Monitor your system resources and adjust:
     # max_samples: 1000
   ```
 
-### Performance Optimization & Analysis
-
-Based on comprehensive performance analysis on RTX 4070 Laptop GPU with 20 CPU cores:
-
-#### Recommended Settings for Large Datasets (SUN397)
-- **Batch size**: 32 (optimal balance between memory and speed)
-- **Number of workers**: 8 (optimal data loading throughput)
-- **Expected throughput**: ~200 samples/sec for data loading, ~2200 samples/sec for inference
-
-#### Performance Analysis Results
-- **Data loading bottleneck**: Use `batch_size=128, num_workers=8` for maximum data loading speed (198.2 samples/sec)
-- **Inference optimization**: Use `batch_size=32` for maximum inference speed (2226.7 samples/sec) 
-- **End-to-end performance**: batch_size=32 provides best overall performance (~14s for 1000 samples)
-- **Memory usage**: ~6GB RAM, ~0.7GB GPU memory for batch_size=32
-
-#### Hardware Requirements
-- **GPU**: NVIDIA RTX 4070 or better recommended
-- **RAM**: Minimum 8GB, 16GB recommended for large datasets
-- **CPU**: Multi-core CPU benefits data loading (8+ cores recommended)
-
-#### Scaling for Different Hardware
-- **Lower-end GPU**: Reduce batch_size to 16 or 8
-- **Less RAM**: Enable `max_samples` limit in config
-- **Fewer CPU cores**: Reduce `num_workers` to 2-4
-
-#### Performance Tools
-- Run `python data_loading_performance.py` to analyze data loading performance
-- Run `python performance_analysis.py` for comprehensive analysis including inference
-
-#### ImageNet
-- **Classes**: 1000 object classes
-- **Images**: Variable size color images
+#### ImageNet-1K
+- **Classes**: 1000 object classes from the ImageNet Large Scale Visual Recognition Challenge
+- **Images**: Variable size color images, 50,000 validation samples
+- **Source**: Official Hugging Face `imagenet-1k` dataset
+- **Authentication**: Requires HuggingFace account and dataset access approval
 - **Usage**: `type: "imagenet"`
+- **Features**:
+  - Complete ImageNet-1K validation set (50,000 images)
+  - Full 1000-class taxonomy with synset mappings
+  - Automatic caching to local storage
+  - WSL/Windows cross-platform support
+- **Setup Requirements**:
+  1. **Authentication**: `huggingface-cli login`
+  2. **Dataset Access**: Request access to `imagenet-1k` on HuggingFace
+  3. **Storage**: ~7GB cache space required
+- **Configuration Example**:
+  ```yaml
+  - name: "ImageNet-1K"
+    type: "imagenet"
+    root_path: "/mnt/d/data/imagenet"  # Cache directory
+    split: "validation"  # Use validation split (50K images)
+  ```
+- **Performance**: 
+  - Initial download: ~30-40 minutes (one-time)
+  - Evaluation speed: ~2000+ samples/sec on RTX 4070
+  - Memory usage: ~6GB RAM, ~0.8GB GPU memory
 
 ## Output Structure
 
@@ -224,5 +239,4 @@ clip-zero-shot-eval/
 ├── evaluator.py              # Evaluation logic
 ├── evaluate.py               # Main evaluation script
 └── requirements.txt          # Dependencies
-```
 ```
