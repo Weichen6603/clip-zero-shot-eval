@@ -17,13 +17,13 @@ datasets:
   # CIFAR-100 dataset with fine labels (100 classes)
   - name: "CIFAR100_Fine"
     type: "cifar100"
-    root_path: "./data/cifar100"
+    root_path: "/mnt/d/data/cifar100"
     split: "test"  # train or test
     use_coarse_labels: false  # Use 100 fine-grained classes
 
   # CIFAR-100 dataset with coarse labels (20 superclasses)
   - name: "CIFAR100_Coarse"
     type: "cifar100"
-    root_path: "./data/cifar100"
+    root_path: "/mnt/d/data/cifar100"
     split: "test"  # train or test
     use_coarse_labels: true  # Use 20 coarse-grained classes

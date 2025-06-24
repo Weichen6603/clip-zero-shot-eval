@@ -4,13 +4,7 @@
 
 from typing import Dict, Any, Type, List
 from base_dataset import BaseDatasetAdapter
-from dataset_adapters import (
-    CIFAR10Adapter,
-    CIFAR100Adapter,
-    ImageNetAdapter,
-    CustomDatasetAdapter,
-    SUN397Adapter
-)
+from dataset_adapters import DatasetAdapterRegistry
 
 
 class DatasetFactory:
@@ -18,14 +12,7 @@ class DatasetFactory:
 
     This factory manages the registration and creation of dataset adapters,
     allowing easy extension with new dataset types.
-    """    # Registry of available dataset adapters
-    _adapters: Dict[str, Type[BaseDatasetAdapter]] = {
-        'cifar10': CIFAR10Adapter,
-        'cifar100': CIFAR100Adapter,
-        'imagenet': ImageNetAdapter,
-        'custom': CustomDatasetAdapter,
-        'sun397': SUN397Adapter,
-    }
+    """
 
     @classmethod
     def register_adapter(cls, name: str, adapter_class: Type[BaseDatasetAdapter]):
@@ -35,15 +22,12 @@ class DatasetFactory:
             name: Name to register the adapter under
             adapter_class: Adapter class (must inherit from BaseDatasetAdapter)
         """
-        if not issubclass(adapter_class, BaseDatasetAdapter):
-            raise ValueError(f"{adapter_class} must inherit from BaseDatasetAdapter")
-
-        cls._adapters[name] = adapter_class
+        DatasetAdapterRegistry.register(name, adapter_class)
 
     @classmethod
     def list_adapters(cls) -> List[str]:
         """Get list of registered adapter names."""
-        return list(cls._adapters.keys())
+        return DatasetAdapterRegistry.list_adapters()
 
     @classmethod
     def create_dataset(cls, config: Dict[str, Any], transform=None) -> BaseDatasetAdapter:
@@ -65,16 +49,11 @@ class DatasetFactory:
             config_dict = copy.deepcopy(config.__dict__)
         else:
             # If config is already a dict, use it directly
-            config_dict = copy.deepcopy(config)
-
-        # Extract dataset type
+            config_dict = copy.deepcopy(config)        # Extract dataset type
         dataset_type = config_dict.pop('type')
-        if dataset_type not in cls._adapters:
-            raise ValueError(
-                f"Unknown dataset type: {dataset_type}. "
-                f"Available types: {cls.list_adapters()}"
-            )        # Get adapter class
-        adapter_class = cls._adapters[dataset_type]
+        
+        # Get adapter class from registry
+        adapter_class = DatasetAdapterRegistry.get_adapter(dataset_type)
 
         # Create and return adapter instance
         return adapter_class(transform=transform, **config_dict)

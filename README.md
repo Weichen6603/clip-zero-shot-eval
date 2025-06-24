@@ -2,10 +2,20 @@
 
 A flexible framework for evaluating CLIP models on zero-shot classification tasks across multiple datasets.
 
+## 🚀 Recent Updates
+
+**Major Refactoring (June 2025)**: The project has been refactored with a new modular architecture:
+- **Centralized Templates**: All prompt templates are now managed in `dataset_adapters.py` for consistency
+- **Modular Adapters**: Each dataset adapter is in its own file within the `adapters/` directory
+- **Auto-Registration**: New adapters are automatically discovered and registered
+- **Backward Compatible**: Existing configurations and usage remain unchanged
+
+See [ADAPTER_REFACTOR.md](ADAPTER_REFACTOR.md) for detailed migration guide and new architecture overview.
+
 ## Features
 
-- **Modular Design**: Easy to add new datasets through adapter pattern
-- **Multiple Dataset Support**: Built-in support for CIFAR-10, CIFAR-100, SUN397, ImageNet, and custom formats
+- **Modular Design**: Easy to add new datasets through adapter pattern with centralized template management
+- **Multiple Dataset Support**: Built-in support for CIFAR-10, CIFAR-100, SUN397, and ImageNet
 - **Large Dataset Optimization**: Memory-efficient lazy loading for large datasets
 - **Flexible Configuration**: YAML-based configuration for experiments
 - **Comprehensive Metrics**: Accuracy, top-5 accuracy, per-class accuracy, confusion matrices
@@ -30,29 +40,73 @@ python evaluate.py config.yaml
 
 ## Adding New Datasets
 
-1. Create a new adapter class inheriting from `BaseDatasetAdapter`
-2. Implement required methods: `_load_data`, `_get_classes`, `get_templates`
-3. Register the adapter in `DatasetFactory`
+The project uses a modular adapter system with centralized template management. To add a new dataset:
 
-Example:
+1. **Create adapter file**: Create a new file in the `adapters/` directory
+2. **Implement adapter class**: Inherit from `BaseDatasetAdapter` and implement required methods
+3. **Use shared templates**: Leverage centralized templates from `DatasetTemplates`
+4. **Register adapter**: Add to the registry for automatic discovery
+
+### Example: Creating a New Adapter
+
+Create `adapters/my_dataset_adapter.py`:
+
 ```python
+"""My dataset adapter."""
+
+import os
+import sys
+from typing import List
+
+# Add parent directory to path for imports
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from base_dataset import BaseDatasetAdapter
+
 class MyDatasetAdapter(BaseDatasetAdapter):
     def _load_data(self, **kwargs):
-        # Load your dataset
-        pass# dataset_factory.py
-        from base_dataset import BaseDatasetAdapter
+        """Load your dataset."""
+        data = []
+        # Your data loading logic here
+        # Return list of dicts with 'image_path' and 'label'
+        return data
     
-    def _get_classes(self):
-        # Return list of class names
-        pass
+    def _get_classes(self) -> List[str]:
+        """Return list of class names."""
+        return ['class1', 'class2', 'class3']  # Your classes
     
-    def get_templates(self):
-        # Return list of prompt templates
-        return ["a photo of a {}.", "an image of a {}."]
-
-# Register
-DatasetFactory.register_adapter('mydataset', MyDatasetAdapter)
+    def get_templates(self) -> List[str]:
+        """Use unified templates from centralized system."""
+        from dataset_adapters import DatasetTemplates
+        # All datasets now use the same comprehensive template set
+        return DatasetTemplates.get_templates()
 ```
+
+### Register the Adapter
+
+Add to `adapters/__init__.py`:
+```python
+from .my_dataset_adapter import MyDatasetAdapter
+```
+
+Add to the registry in `dataset_adapters.py`:
+```python
+try:
+    from adapters.my_dataset_adapter import MyDatasetAdapter
+    DatasetAdapterRegistry.register('my_dataset', MyDatasetAdapter)
+except ImportError:
+    pass
+```
+
+### Unified Template System
+
+The framework now uses a single comprehensive template set for all datasets, ensuring consistency across evaluations:
+
+- **Unified Templates** (100 templates): A comprehensive set combining the best templates from object classification, scene classification, and ImageNet-style prompts
+- **Consistent Performance**: All datasets benefit from the same diverse template variations  
+- **Simplified Maintenance**: Single template set reduces complexity and ensures consistent updates
+
+This unified approach eliminates the need to choose different template sets and provides optimal performance across all dataset types.
 
 ## Configuration Options
 
@@ -141,11 +195,6 @@ Based on comprehensive performance analysis on RTX 4070 Laptop GPU with 20 CPU c
 - **Images**: Variable size color images
 - **Usage**: `type: "imagenet"`
 
-#### Custom Datasets
-- **Formats**: JSON, CSV, TXT annotations
-- **Flexible**: Configurable image and label keys
-- **Usage**: `type: "custom"`
-
 ## Output Structure
 
 ```
@@ -153,5 +202,27 @@ results/
 ├── config_used.yaml       # Configuration used for reproducibility
 ├── results_YYYYMMDD_HHMMSS.json  # Detailed results
 └── summary_YYYYMMDD_HHMMSS.txt   # Human-readable summary
+```
+
+## Project Structure
+
+```
+clip-zero-shot-eval/
+├── adapters/                    # Dataset adapter implementations
+│   ├── __init__.py             # Package initialization  
+│   ├── cifar10_adapter.py      # CIFAR-10 dataset adapter
+│   ├── cifar100_adapter.py     # CIFAR-100 dataset adapter
+│   ├── imagenet_adapter.py     # ImageNet dataset adapter
+│   └── sun397_adapter.py       # SUN397 dataset adapter
+├── config/                     # Configuration files
+├── data/                      # Dataset storage
+├── results/                   # Evaluation results
+├── dataset_adapters.py        # Central registry and templates
+├── dataset_factory.py         # Factory for creating adapters
+├── base_dataset.py           # Base adapter class
+├── clip_classifier.py        # CLIP model wrapper
+├── evaluator.py              # Evaluation logic
+├── evaluate.py               # Main evaluation script
+└── requirements.txt          # Dependencies
 ```
 ```

@@ -4,10 +4,10 @@ use_ensemble: true
 batch_size: 32
 num_workers: 4
 save_predictions: false
-output_dir: ./results/clip_evaluation
+output_dir: ./results/cifar10_evaluation
 save_results: true
 datasets:
 - name: CIFAR10
   type: cifar10
-  root_path: ./data/cifar10
+  root_path: /mnt/d/data/cifar10
   split: test
