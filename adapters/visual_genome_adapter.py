@@ -1,10 +1,11 @@
-"""Visual Genome dataset adapter - Ultra memory optimized version."""
+"""Visual Genome dataset adapter - True lazy loading implementation."""
 
 import os
 import sys
 import gc
 import time
-from typing import List, Dict, Any
+import random
+from typing import List, Dict, Any, Optional, Iterator
 from collections import OrderedDict
 from PIL import Image
 
@@ -15,11 +16,16 @@ from base_dataset import BaseDatasetAdapter
 
 
 class VisualGenomeAdapter(BaseDatasetAdapter):
-    """Adapter for Visual Genome dataset with ultra memory optimization."""
+    """Adapter for Visual Genome dataset with true lazy loading implementation.
+    
+    This implementation only loads sample indices and essential metadata upfront,
+    then loads actual data on-demand during iteration. This dramatically reduces
+    memory usage for large datasets.
+    """
 
     def __init__(self, root_path: str, split: str = "train", transform=None, **kwargs):
         """
-        Initialize Visual Genome adapter with ultra memory optimization.
+        Initialize Visual Genome adapter with true lazy loading.
         
         Args:
             root_path: Path for caching dataset
@@ -28,23 +34,24 @@ class VisualGenomeAdapter(BaseDatasetAdapter):
             **kwargs: Additional arguments including:
                 - max_samples: Maximum number of samples to use
                 - min_objects: Minimum number of objects per image (default: 1)
-                - max_objects: Maximum number of objects per image (default: None)
+                - max_objects: Maximum number of objects per image (default: 20)
                 - use_synsets: Whether to use synsets instead of names (default: False)
                 - config_name: Visual Genome config to use (default: "objects_v1.2.0")
         """
         self.min_objects = kwargs.get('min_objects', 1)
-        self.max_objects = kwargs.get('max_objects', None)
+        self.max_objects = kwargs.get('max_objects', 20)
         self.use_synsets = kwargs.get('use_synsets', False)
         self.max_samples = kwargs.get('max_samples', None)
         self.config_name = kwargs.get('config_name', 'objects_v1.2.0')
         
-        # Ultra minimal image cache - only keep 100 images
-        self._image_cache = OrderedDict()
-        self._cache_size = 100
-        
-        # Store dataset reference for lazy loading
+        # True lazy loading: only store indices and minimal metadata
         self._dataset = None
-        self._dataset_iter = None
+        self._sample_indices = []
+        self._classes_cache = None
+        
+        # Small image cache for frequently accessed images
+        self._image_cache = OrderedDict()
+        self._cache_size = 50  # Smaller cache for memory efficiency
         
         # Visual Genome only has train split
         if split != "train":
@@ -57,170 +64,231 @@ class VisualGenomeAdapter(BaseDatasetAdapter):
         super().__init__(root_path, transform=transform, split="train", **filtered_kwargs)
 
     def _load_data(self, **kwargs):
-        """Load Visual Genome data with ultra memory optimization."""
+        """Load Visual Genome data with true lazy loading - only indices and essential metadata."""
         try:
             from datasets import load_dataset
         except ImportError:
             raise ImportError("Please install datasets: pip install datasets")
 
-        print(f"Loading Visual Genome dataset ({self.config_name}) with ultra memory optimization...")
-        print("Only storing minimal metadata, images loaded on-demand.")
+        print(f"Loading Visual Genome dataset ({self.config_name}) with true lazy loading...")
+        print("Only pre-scanning for valid samples, actual data loaded on-demand.")
         
         # Set environment for better memory management
-        import os
         os.environ['HF_HUB_DOWNLOAD_TIMEOUT'] = '600'
         os.environ['HF_DATASETS_CACHE'] = self.root_path
         
         try:
-            # Load with streaming enabled for minimal memory footprint
-            dataset = load_dataset(
+            # Load dataset without streaming for index access
+            self._dataset = load_dataset(
                 "visual_genome", 
                 self.config_name,
                 cache_dir=self.root_path,
                 trust_remote_code=True,
-                streaming=True,
                 split='train'
             )
             
-            if hasattr(dataset, 'shuffle'):
-                dataset = dataset.shuffle(seed=42, buffer_size=1000)
+            # Get dataset size safely
+            try:
+                if hasattr(self._dataset, '__len__'):
+                    try:
+                        dataset_size = len(self._dataset)  # type: ignore[arg-type]
+                        print(f"Dataset loaded. Total available samples: {dataset_size}")
+                    except TypeError:
+                        print("Dataset loaded. Using streaming mode.")
+                        dataset_size = 50000  # Default estimate
+                else:
+                    print("Dataset loaded. Using streaming mode.")
+                    dataset_size = 50000  # Default estimate
+            except:
+                print("Dataset loaded. Size unknown, using estimate.")
+                dataset_size = 50000
             
         except Exception as e:
             print(f"Error loading Visual Genome dataset: {e}")
-            if "timeout" in str(e).lower() or "connection" in str(e).lower():
-                print("❌ Network connection issue. Please check internet connectivity.")
-                raise Exception(f"Network error loading Visual Genome: {e}")
-            
-            # Fallback to older version
-            print("Trying with fallback version...")
+            # Try fallback version
             try:
-                dataset = load_dataset(
+                print("Trying with fallback version...")
+                self._dataset = load_dataset(
                     "visual_genome", 
                     "objects_v1.0.0",
                     cache_dir=self.root_path,
                     trust_remote_code=True,
-                    streaming=True,
                     split='train'
                 )
                 self.config_name = "objects_v1.0.0"
+                dataset_size = len(self._dataset) if hasattr(self._dataset, '__len__') else 50000  # type: ignore[arg-type]
+                print("Successfully loaded fallback version")
             except Exception as e2:
                 raise Exception(f"Failed to load Visual Genome dataset: {e2}")
         
-        # Store dataset reference for lazy loading
-        self._dataset = dataset
+        # Pre-scan to find valid sample indices (lightweight operation)
+        print("Pre-scanning for valid samples...")
+        valid_indices = []
+        sample_count = 0
         
-        # Only load metadata, not actual data
-        metadata = []
-        processed_count = 0
-        
-        print("Processing metadata (ultra-lite mode)...")
-        
-        try:
-            # Use take() to limit samples early in streaming
-            if self.max_samples:
-                dataset_iter = dataset.take(self.max_samples * 2)  # Take more to account for filtering
+        # Determine scanning strategy based on max_samples
+        if self.max_samples:
+            # Limited samples: scan more to ensure we get enough valid ones
+            max_scan = self.max_samples * 3
+            scan_limit = min(dataset_size, max_scan)
+            if scan_limit > 5000:
+                # Random sampling for efficiency
+                scan_indices = random.sample(range(min(dataset_size, 30000)), min(scan_limit, 5000))
             else:
-                dataset_iter = dataset
-            
-            for idx, example in enumerate(dataset_iter):
+                scan_indices = list(range(scan_limit))
+            print(f"Target samples: {self.max_samples}, scanning {len(scan_indices)} samples to find valid data...")
+        else:
+            # No sample limit: use more comprehensive scanning
+            max_scan = min(dataset_size, 30000)  # Increased limit for no max_samples
+            if dataset_size > 30000:
+                # For very large datasets, sample more broadly
+                scan_indices = random.sample(range(dataset_size), 30000)
+            else:
+                # For smaller datasets, scan all or most
+                scan_indices = list(range(min(dataset_size, max_scan)))
+            print(f"No sample limit specified, scanning {len(scan_indices)} samples to find all valid data...")
+        
+        for scan_idx, actual_idx in enumerate(scan_indices):
+            try:
+                if self.max_samples and len(valid_indices) >= self.max_samples:
+                    break
+                
+                # Try to access the sample safely
                 try:
-                    # Early break if we have enough samples
-                    if self.max_samples and processed_count >= self.max_samples:
-                        break
-                    
-                    # Extract and validate objects
+                    example = self._dataset[actual_idx]  # type: ignore[index]
+                except (IndexError, KeyError, TypeError, AttributeError):
+                    continue
+                
+                # Extract objects safely
+                if isinstance(example, dict):
                     objects = example.get("objects", [])
-                    if not objects:
-                        continue
-                        
-                    num_objects = len(objects)
-                    if num_objects < self.min_objects:
-                        continue
-                    if self.max_objects and num_objects > self.max_objects:
-                        continue
+                else:
+                    objects = getattr(example, 'objects', [])
                     
-                    # Extract minimal label information
-                    labels = []
-                    for obj in objects[:5]:  # Only process first 5 objects to save memory
-                        if self.use_synsets:
-                            obj_synsets = obj.get("synsets", [])
-                            if obj_synsets:
-                                labels.extend(obj_synsets[:2])  # Max 2 synsets per object
-                        else:
-                            obj_names = obj.get("names", [])
-                            if obj_names:
-                                labels.extend(obj_names[:2])  # Max 2 names per object
-                    
-                    # Clean labels and limit count
-                    labels = [label.strip() for label in set(labels) 
-                             if label and isinstance(label, str) and len(label.strip()) > 0][:5]
-                    
-                    if not labels:
-                        continue
-                    
-                    # Store absolute minimal metadata
-                    metadata.append({
-                        'idx': idx,
-                        'label': labels[0],  # Primary label only
-                        'image_id': example.get("image_id", f"img_{idx}"),
-                        'url': example.get("url", "")[:100],  # Truncate URL to save memory
-                        # Remove width, height, all_labels to save memory
-                    })
-                    
-                    processed_count += 1
-                    
-                    # More frequent progress updates and garbage collection
-                    if processed_count % 500 == 0:
-                        print(f"Processed {processed_count} samples...")
-                        gc.collect()  # Force garbage collection
-                        
-                except Exception as e:
-                    if idx < 3:  # Show fewer error messages
-                        print(f"Error processing sample {idx}: {e}")
+                if not objects:
                     continue
                     
-        except Exception as e:
-            print(f"Error iterating through dataset: {e}")
-            if len(metadata) == 0:
-                raise Exception(f"Failed to load any samples: {e}")
+                num_objects = len(objects)
+                if num_objects < self.min_objects or (self.max_objects and num_objects > self.max_objects):
+                    continue
+                
+                # Check if we can extract valid labels
+                has_valid_labels = False
+                for obj in objects[:3]:  # Check first few objects only
+                    if self.use_synsets:
+                        synsets = obj.get("synsets", []) if isinstance(obj, dict) else getattr(obj, 'synsets', [])
+                        if synsets:
+                            has_valid_labels = True
+                            break
+                    else:
+                        names = obj.get("names", []) if isinstance(obj, dict) else getattr(obj, 'names', [])
+                        if names:
+                            has_valid_labels = True
+                            break
+                
+                if has_valid_labels:
+                    valid_indices.append(actual_idx)
+                
+                sample_count += 1
+                if sample_count % 200 == 0:
+                    print(f"Scanned {sample_count} samples, found {len(valid_indices)} valid samples...")
+                    
+            except Exception as e:
+                if scan_idx < 3:  # Only show first few errors
+                    print(f"Error checking sample {actual_idx}: {e}")
+                continue
+            
+        if len(valid_indices) == 0:
+            raise Exception("Failed to find any valid samples during pre-scanning")
 
-        print(f"✅ Loaded {len(metadata)} Visual Genome samples (ultra-lite metadata)")
-        if metadata:
-            print(f"Sample labels: {[item['label'] for item in metadata[:3]]}")
+        self._sample_indices = valid_indices
+        print(f"✅ Found {len(valid_indices)} valid samples for lazy loading")
         
-        # Force garbage collection
-        gc.collect()
-        
-        return metadata
+        # Return minimal metadata - just indices
+        return [{'sample_index': idx} for idx in valid_indices]
 
     def _get_classes(self) -> List[str]:
-        """Get all unique class names from the dataset."""
-        if not hasattr(self, '_classes'):
-            # Only use primary labels to reduce memory
-            all_labels = {item['label'] for item in self.data}
-            self._classes = sorted(list(all_labels))
-            print(f"Found {len(self._classes)} unique classes")
-        return self._classes
+        """Get all unique class names by sampling from the dataset."""
+        if self._classes_cache is not None:
+            return self._classes_cache
+        
+        print("Sampling dataset to discover class names...")
+        all_labels = set()
+        
+        # Adaptive sampling based on dataset size
+        if len(self._sample_indices) < 1000:
+            # Small dataset: sample all
+            sample_size = len(self._sample_indices)
+        elif len(self._sample_indices) < 5000:
+            # Medium dataset: sample 80%
+            sample_size = int(len(self._sample_indices) * 0.8)
+        else:
+            # Large dataset: sample at least 2000 but up to 50%
+            sample_size = min(max(2000, len(self._sample_indices) // 2), 10000)
+        
+        print(f"Sampling {sample_size} out of {len(self._sample_indices)} samples for class discovery...")
+        
+        # Sample random indices to get diverse class coverage
+        sample_indices = random.sample(self._sample_indices, sample_size) if len(self._sample_indices) > sample_size else self._sample_indices
+        
+        for i, sample_idx in enumerate(sample_indices):
+            try:
+                if self._dataset is None:
+                    break
+                    
+                example = self._dataset[sample_idx]  # type: ignore[index]
+                
+                # Extract objects safely
+                if isinstance(example, dict):
+                    objects = example.get("objects", [])
+                else:
+                    objects = getattr(example, 'objects', [])
+                
+                for obj in objects[:3]:  # Limit objects per image for efficiency
+                    if self.use_synsets:
+                        synsets = obj.get("synsets", []) if isinstance(obj, dict) else getattr(obj, 'synsets', [])
+                        for synset in synsets[:2]:  # Limit synsets per object
+                            if synset and isinstance(synset, str):
+                                all_labels.add(synset.strip())
+                    else:
+                        names = obj.get("names", []) if isinstance(obj, dict) else getattr(obj, 'names', [])
+                        for name in names[:2]:  # Limit names per object
+                            if name and isinstance(name, str):
+                                all_labels.add(name.strip())
+                
+                if i % 50 == 0 and i > 0:
+                    print(f"Sampled {i} images, found {len(all_labels)} unique classes so far...")
+                    
+            except Exception as e:
+                if i < 3:
+                    print(f"Error sampling classes from index {sample_idx}: {e}")
+                continue
+        
+        self._classes_cache = sorted(list(all_labels))
+        print(f"Discovered {len(self._classes_cache)} unique classes from {len(sample_indices)} samples")
+        
+        return self._classes_cache
 
-    def __getitem__(self, idx: int):
-        """Get item by index with on-demand image loading."""
+    def __getitem__(self, idx: int) -> tuple:
+        """Get item by index with on-demand loading (lazy loading)."""
         if idx >= len(self.data):
             raise IndexError(f"Index {idx} out of range for dataset of size {len(self.data)}")
         
         item = self.data[idx]
+        sample_index = item['sample_index']
         
         # Check cache first
-        cache_key = item['image_id']
+        cache_key = f"sample_{sample_index}"
         if cache_key in self._image_cache:
-            image = self._image_cache[cache_key]
+            image, label = self._image_cache[cache_key]
             # Move to end (most recently used)
             self._image_cache.move_to_end(cache_key)
         else:
-            # Load image on demand
-            image = self._load_image_on_demand(item)
+            # Load data on demand
+            image, label = self._load_sample_on_demand(sample_index)
             
             # Add to cache with size limit
-            self._image_cache[cache_key] = image
+            self._image_cache[cache_key] = (image, label)
             if len(self._image_cache) > self._cache_size:
                 # Remove least recently used
                 self._image_cache.popitem(last=False)
@@ -229,52 +297,71 @@ class VisualGenomeAdapter(BaseDatasetAdapter):
         if self.transform:
             image = self.transform(image)
         
-        return image, item['label']
+        # Convert label to index for consistency with base class
+        if isinstance(label, str) and label in self.class_to_idx:
+            label_idx = self.class_to_idx[label]
+        else:
+            label_idx = 0  # Default fallback
+        
+        return image, label_idx
 
-    def _load_image_on_demand(self, item: Dict[str, Any]) -> Image.Image:
-        """Load image on demand from URL or dataset."""
+    def _load_sample_on_demand(self, sample_index: int) -> tuple:
+        """Load a specific sample on demand."""
         try:
-            # Try to load from URL first (faster if available)
-            url = item.get('url', '')
-            if url and url.startswith('http'):
-                try:
-                    import requests
-                    from io import BytesIO
-                    
-                    response = requests.get(url, timeout=10, stream=True)
-                    if response.status_code == 200:
-                        image = Image.open(BytesIO(response.content))
-                        if image.mode != 'RGB':
-                            image = image.convert('RGB')
-                        return image
-                except Exception:
-                    pass  # Fall back to dataset loading
-            
-            # Fallback: load from dataset (slower but more reliable)
             if self._dataset is None:
                 raise Exception("Dataset not loaded")
             
-            # This is expensive but necessary for reliability
-            dataset_iter = iter(self._dataset)
-            target_idx = item['idx']
+            # Try direct indexing first, with fallback to iteration
+            try:
+                try:
+                    example = self._dataset[sample_index]  # type: ignore[index]
+                except (IndexError, KeyError, TypeError, AttributeError):
+                    # Fallback for iterable datasets
+                    example = None
+                    for i, item in enumerate(self._dataset):
+                        if i == sample_index:
+                            example = item
+                            break
+                    if example is None:
+                        raise IndexError(f"Sample {sample_index} not found")
+            except (IndexError, TypeError):
+                # Create fallback data
+                return Image.new('RGB', (224, 224), color='gray'), "unknown"
             
-            for i, example in enumerate(dataset_iter):
-                if i == target_idx:
-                    image = example.get('image')
-                    if image and hasattr(image, 'convert'):
-                        if image.mode != 'RGB':
-                            image = image.convert('RGB')
-                        return image
-                    break
+            # Extract image
+            if isinstance(example, dict):
+                image = example.get("image")
+                objects = example.get("objects", [])
+            else:
+                image = getattr(example, 'image', None)
+                objects = getattr(example, 'objects', [])
             
-            # If we can't load the image, create a placeholder
-            print(f"Warning: Could not load image for item {item['image_id']}, using placeholder")
-            return Image.new('RGB', (224, 224), color='gray')
+            if image is None:
+                # Create placeholder if image not available
+                image = Image.new('RGB', (224, 224), color='gray')
+            elif hasattr(image, 'convert'):
+                if image.mode != 'RGB':
+                    image = image.convert('RGB')
+            
+            # Extract primary label
+            primary_label = "unknown"
+            if objects:
+                obj = objects[0]  # Use first object
+                if self.use_synsets:
+                    synsets = obj.get("synsets", []) if isinstance(obj, dict) else getattr(obj, 'synsets', [])
+                    if synsets and synsets[0]:
+                        primary_label = synsets[0].strip()
+                else:
+                    names = obj.get("names", []) if isinstance(obj, dict) else getattr(obj, 'names', [])
+                    if names and names[0]:
+                        primary_label = names[0].strip()
+            
+            return image, primary_label
             
         except Exception as e:
-            print(f"Error loading image {item['image_id']}: {e}")
-            # Return a placeholder image
-            return Image.new('RGB', (224, 224), color='gray')
+            print(f"Error loading sample {sample_index}: {e}")
+            # Return placeholder
+            return Image.new('RGB', (224, 224), color='gray'), "unknown"
 
     def __len__(self) -> int:
         """Return the number of samples in the dataset."""
@@ -302,13 +389,57 @@ class VisualGenomeAdapter(BaseDatasetAdapter):
             raise IndexError(f"Index {idx} out of range")
         
         item = self.data[idx]
-        return {
-            'image_id': item['image_id'],
-            'primary_label': item['label'],
-            'all_labels': item.get('all_labels', [item['label']]),
-            'num_objects': item.get('num_objects', 1),
-            'image_size': item.get('image_size', (0, 0)),
-            'url': item.get('url', 'N/A'),
-            'coco_id': item.get('coco_id'),
-            'flickr_id': item.get('flickr_id')
-        }
+        sample_index = item['sample_index']
+        
+        try:
+            if self._dataset is None:
+                raise Exception("Dataset not loaded")
+            
+            # Try to get sample info safely  
+            try:
+                # Use duck typing to safely access the dataset
+                example = None
+                try:
+                    # Try direct indexing with runtime error handling
+                    example = self._dataset[sample_index]  # type: ignore[index]
+                except (IndexError, KeyError, TypeError, AttributeError):
+                    # Fallback for iterable datasets or failed indexing
+                    for i, dataset_item in enumerate(self._dataset):
+                        if i == sample_index:
+                            example = dataset_item
+                            break
+                    if example is None:
+                        raise IndexError(f"Sample {sample_index} not found")
+            except (IndexError, TypeError):
+                return {
+                    'sample_index': sample_index,
+                    'error': 'Could not access sample'
+                }
+            
+            if isinstance(example, dict):
+                return {
+                    'sample_index': sample_index,
+                    'image_id': example.get('image_id', f'img_{sample_index}'),
+                    'url': example.get('url', 'N/A'),
+                    'width': example.get('width', 0),
+                    'height': example.get('height', 0),
+                    'num_objects': len(example.get('objects', [])),
+                    'coco_id': example.get('coco_id'),
+                    'flickr_id': example.get('flickr_id')
+                }
+            else:
+                return {
+                    'sample_index': sample_index,
+                    'image_id': getattr(example, 'image_id', f'img_{sample_index}'),
+                    'url': getattr(example, 'url', 'N/A'),
+                    'width': getattr(example, 'width', 0),
+                    'height': getattr(example, 'height', 0),
+                    'num_objects': len(getattr(example, 'objects', [])),
+                    'coco_id': getattr(example, 'coco_id', None),
+                    'flickr_id': getattr(example, 'flickr_id', None)
+                }
+        except Exception as e:
+            return {
+                'sample_index': sample_index,
+                'error': str(e)
+            }

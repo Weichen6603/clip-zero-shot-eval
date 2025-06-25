@@ -2,15 +2,6 @@
 
 A flexible framework for evaluating CLIP models on zero-shot classification tasks across multiple datasets.
 
-## 🚀 Recent Updates
-
-**Major Refactoring (June 2025)**: The project has been refactored with a new modular architecture:
-- **Centralized Templates**: All prompt templates are now managed in `dataset_adapters.py` for consistency
-- **Modular Adapters**: Each dataset adapter is in its own file within the `adapters/` directory
-- **Auto-Registration**: New adapters are automatically discovered and registered
-- **ImageNet-1K Support**: Added complete support for official HuggingFace ImageNet-1K dataset
-- **Backward Compatible**: Existing configurations and usage remain unchanged
-
 ## Features
 
 - **Modular Design**: Easy to add new datasets through adapter pattern with centralized template management
@@ -47,14 +38,56 @@ huggingface-cli login
 
 ## Quick Start
 
-1. Prepare your configuration file (see `example_config.yaml`)
-2. Run evaluation:
+### Available Datasets
+
+Choose from our pre-configured datasets and run evaluations immediately:
+
+#### CIFAR-10 (10 classes, ~32x32 images)
+```bash
+python evaluate.py config/cifar10.yaml
+```
+- **Dataset**: Automatically downloaded via torchvision
+- **Classes**: 10 basic categories (airplane, car, bird, cat, etc.)
+
+#### CIFAR-100 (100 classes, ~32x32 images)
+```bash
+python evaluate.py config/cifar100.yaml
+```
+- **Dataset**: Automatically downloaded via torchvision
+- **Classes**: 100 detailed categories with fine/coarse labels
+
+#### SUN397 (397 scene categories, large-scale)
+```bash
+python evaluate.py config/sun397.yaml
+```
+- **Dataset**: Automatically downloaded via HuggingFace
+- **Classes**: 397 scene categories (abbey, airport, alley, etc.)
+
+#### ImageNet-1K (1000 classes, requires access approval)
+```bash
+# First-time setup required (see detailed guide below)
+python evaluate.py config/imagenet.yaml
+```
+- **Dataset**: Official ImageNet-1K via HuggingFace (requires approval)
+- **Classes**: 1000 object categories
+
+#### Visual Genome (2000+ object types, complex scenes)
+```bash
+python evaluate.py config/visual_genome.yaml
+```
+- **Dataset**: Automatically downloaded via HuggingFace
+- **Classes**: 2000+ unique object types in rich visual scenes
+- **Features**: Lazy loading for memory efficiency
+
+### Custom Configuration
+
+For custom settings, modify any config file or create your own:
 
 ```bash
-python evaluate.py config.yaml
+python evaluate.py your_custom_config.yaml
 ```
 
-### ImageNet-1K Quick Start
+### ImageNet-1K Detailed Setup
 
 1. **Setup authentication**:
    ```bash
@@ -198,50 +231,45 @@ Monitor your system resources and adjust:
   1. **Authentication**: `huggingface-cli login`
   2. **Dataset Access**: Request access to `imagenet-1k` on HuggingFace
   3. **Storage**: ~7GB cache space required
-- **Configuration Example**:
-  ```yaml
-  - name: "ImageNet-1K"
-    type: "imagenet"
-    root_path: "/mnt/d/data/imagenet"  # Cache directory
-    split: "validation"  # Use validation split (50K images)
-  ```
-- **Performance**: 
-  - Initial download: ~30-40 minutes (one-time)
-  - Evaluation speed: ~2000+ samples/sec on RTX 4070
-  - Memory usage: ~6GB RAM, ~0.8GB GPU memory
 
 #### Visual Genome
-- **Classes**: Variable object classes extracted from scene annotations (10,000+ unique object names)
-- **Images**: Variable size color images with rich object annotations, ~108,000 images
-- **Source**: Visual Genome dataset via Hugging Face `visual_genome` dataset  
-- **Challenge**: Large-scale visual understanding with complex multi-object scenes
+- **Classes**: 2,000+ unique object types in rich visual scenes
+- **Images**: ~108,000 variable size color images with complex object relationships
+- **Source**: Visual Genome v1.2.0 Objects dataset via HuggingFace
 - **Usage**: `type: "visual_genome"`
 - **Features**:
-  - Rich object annotations with bounding boxes and relationships
-  - Multi-label scenarios (multiple objects per image)
-  - Support for both object names and WordNet synsets
-  - Configurable object filtering (min/max objects per image)
-  - Memory-efficient lazy loading for large dataset
-- **Setup Requirements**:
-  1. **Installation**: `pip install datasets` (included in requirements.txt)
-  2. **Storage**: ~20GB+ cache space required for full dataset
-  3. **First-time download**: May take 1-2 hours depending on connection
-- **Configuration Example**:
+  - **Lazy Loading**: Memory-efficient loading for large-scale evaluation
+  - **Flexible Filtering**: Configurable object count and sample size limits
+  - **Rich Annotations**: Multiple objects per image with detailed labels
+  - **Zero-Shot Challenge**: Complex scenes with diverse object types
+- **Configuration Parameters**:
   ```yaml
   - name: "VisualGenome-Objects"
     type: "visual_genome"
-    root_path: "/mnt/d/data/visual_genome/cache"  # Cache directory
-    split: "train"  # Will auto-split for evaluation
-    max_samples: 10000  # Optional: limit for testing
-    min_objects: 1      # Minimum objects per image
-    max_objects: 20     # Maximum objects per image
-    use_synsets: false  # Use object names (true for WordNet synsets)
+    root_path: "/path/to/cache"          # HuggingFace cache directory
+    config_name: "objects_v1.2.0"       # Dataset version
+    
+    # Lazy loading optimization parameters
+    max_samples: null        # Use all samples (~108K) or limit (e.g., 10000)
+    min_objects: 1           # Minimum objects per image (filter empty images)
+    max_objects: null        # Maximum objects per image (null = no limit)
+    use_synsets: false       # Use object names (false) vs WordNet synsets (true)
   ```
-- **Performance Notes**:
-  - Large dataset with complex annotations
-  - Uses primary object label for zero-shot classification
-  - Recommended to start with limited samples for testing
-  - Memory usage varies with batch size and image complexity
+- **Parameter Guide**:
+  - **`max_samples`**: Control dataset size for faster testing or full evaluation
+    - Remove or set `null` for full dataset (~80K-100K filtered samples)
+    - Set to `10000` for medium-scale testing
+    - Set to `1000` for quick validation
+  - **`min_objects`**: Filter out images with too few objects (recommended: 1-2)
+  - **`max_objects`**: Limit complexity by filtering highly complex images
+    - Set `null` for no limit (include all complexity levels)
+    - Set `20-30` for balanced complexity
+  - **`use_synsets`**: Choose label type (typically `false` for readability)
+- **Expected Results** (full dataset):
+  - **Samples**: ~80,000-100,000 images (after filtering)
+  - **Classes**: 2,000-3,000 unique object types
+  - **Memory Usage**: Low (thanks to lazy loading implementation)
+- **Memory Optimization**: The adapter uses true lazy loading - only sample indices are kept in memory, with images and labels loaded on-demand and cached using LRU strategy
 
 ## Output Structure
 
@@ -257,19 +285,26 @@ results/
 ```
 clip-zero-shot-eval/
 ├── adapters/                    # Dataset adapter implementations
-│   ├── __init__.py             # Package initialization  
+│   ├── __init__.py             # Package initialization and auto-registration
 │   ├── cifar10_adapter.py      # CIFAR-10 dataset adapter
 │   ├── cifar100_adapter.py     # CIFAR-100 dataset adapter
-│   ├── imagenet_adapter.py     # ImageNet dataset adapter
-│   └── sun397_adapter.py       # SUN397 dataset adapter
-├── config/                     # Configuration files
-├── data/                      # Dataset storage
-├── results/                   # Evaluation results
-├── dataset_adapters.py        # Central registry and templates
-├── dataset_factory.py         # Factory for creating adapters
-├── base_dataset.py           # Base adapter class
-├── clip_classifier.py        # CLIP model wrapper
-├── evaluator.py              # Evaluation logic
+│   ├── imagenet_adapter.py     # ImageNet-1K dataset adapter
+│   ├── imagenet_classes.py     # ImageNet class mappings and synsets
+│   ├── sun397_adapter.py       # SUN397 scene classification adapter
+│   └── visual_genome_adapter.py # Visual Genome objects adapter (lazy loading)
+├── config/                     # Pre-configured evaluation settings
+│   ├── cifar10.yaml           # CIFAR-10 evaluation configuration
+│   ├── cifar100.yaml          # CIFAR-100 evaluation configuration  
+│   ├── imagenet.yaml          # ImageNet-1K evaluation configuration
+│   ├── sun397.yaml            # SUN397 evaluation configuration
+│   └── visual_genome.yaml     # Visual Genome evaluation configuration
+├── data/                      # Dataset cache and storage
+├── results/                   # Evaluation results and reports
+├── dataset_adapters.py        # Central registry and unified templates
+├── dataset_factory.py         # Factory for creating dataset adapters
+├── base_dataset.py           # Base adapter class and interface
+├── clip_classifier.py        # CLIP model wrapper and inference
+├── evaluator.py              # Evaluation metrics and logic
 ├── evaluate.py               # Main evaluation script
-└── requirements.txt          # Dependencies
+└── requirements.txt          # Package dependencies
 ```

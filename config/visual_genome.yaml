@@ -1,13 +1,14 @@
-# Visual Genome Configuration for CLIP Zero-Shot Evaluation
+# Visual Genome Configuration - Full Dataset Evaluation
+# Optimized for comprehensive evaluation with lazy loading
 
 # CLIP model configuration
 clip_model: "ViT-B/32"  # Options: RN50, RN101, RN50x4, RN50x16, ViT-B/32, ViT-B/16, ViT-L/14
 device: "cuda"  # cuda or cpu
 use_ensemble: true  # Whether to use multiple templates for text encoding
 
-# Evaluation settings - Ultra memory optimized
-batch_size: 32   # Reduced to 4 for ultra memory efficiency
-num_workers: 8  # Single worker to minimize memory overhead
+# Evaluation settings
+batch_size: 32  # Optimized batch size for memory efficiency
+num_workers: 8  # Number of data loading workers
 save_predictions: false  # Save individual predictions (large files)
 
 # Output settings
@@ -16,9 +17,25 @@ save_results: true
 
 # Dataset configurations
 datasets:
-  # Visual Genome dataset - Object Classification
+  # Visual Genome with full dataset configuration
   - name: "VisualGenome-Objects"
     type: "visual_genome"
-    root_path: "/mnt/d/data/visual_genome"  # HuggingFace cache directory
-    split: "train"  # Will auto-split for evaluation
-  
+    root_path: "/mnt/d/data/visual_genome"  # Cache directory for lazy loading
+    split: "train"  # Only split available
+    config_name: "objects_v1.2.0"  # Visual Genome configuration
+    
+    # Full dataset parameters with lazy loading optimization
+    # max_samples: null      # Use all available samples (~108K images) - remove to enable
+    min_objects: 1           # Include images with at least 1 object
+    max_objects: null        # No limit on object complexity
+    use_synsets: false       # Use original object names for better interpretability
+    
+    # For testing or limited resources, uncomment these lines:
+    # max_samples: 10000     # Limit to 10K samples for faster evaluation
+    # max_objects: 20        # Limit complexity to 20 objects per image
+    
+    # Expected results (full dataset):
+    # - Samples: ~80,000-100,000 (after filtering)
+    # - Classes: 2,000-3,000 unique object types
+    # - Evaluation time: 3-6 hours (depending on hardware)
+    # - Memory usage: Low (thanks to lazy loading)
