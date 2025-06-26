@@ -1,0 +1,19 @@
+clip_model: ViT-B/32
+device: cuda
+use_ensemble: true
+batch_size: 32
+num_workers: 4
+save_predictions: false
+output_dir: ./results/treeoflife_lightweight
+save_results: true
+datasets:
+- name: TreeOfLife-10M-Lightweight
+  type: treeoflife
+  root_path: /mnt/d/data/treeoflife
+  split: train
+  taxonomic_level: species
+  use_common_names: true
+  exclude_partial_labels: false
+  max_shards: 3
+  min_images_per_class: 1
+  use_precomputed_embeddings: true

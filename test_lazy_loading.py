@@ -1,124 +1,47 @@
 #!/usr/bin/env python3
 """
-Test script for Visual Genome lazy loading adapter.
-Demonstrates memory-efficient loading of large datasets.
+快速测试TreeOfLife adapter的pandas懒加载功能
 """
 
 import sys
 import os
+import time
+
+# Add project root to path
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-from adapters.visual_genome_adapter import VisualGenomeAdapter
-import torch
-import time
-import psutil
-import gc
-
-def get_memory_usage():
-    """Get current memory usage in MB."""
-    process = psutil.Process(os.getpid())
-    return process.memory_info().rss / 1024 / 1024
-
 def test_lazy_loading():
-    """Test the lazy loading Visual Genome adapter."""
-    print("🧪 Testing Visual Genome Lazy Loading Adapter")
-    print("=" * 60)
+    """测试pandas分块懒加载"""
+    print("🧪 测试TreeOfLife adapter的pandas懒加载...")
     
-    # Memory before loading
-    initial_memory = get_memory_usage()
-    print(f"Initial memory usage: {initial_memory:.1f} MB")
-    
-    # Test configuration
-    config = {
-        'root_path': './data/vg_test',  # Local cache directory
-        'max_samples': 100,  # Small test size
-        'min_objects': 1,
-        'max_objects': 10,
-        'use_synsets': False,
-        'config_name': 'objects_v1.2.0'
-    }
-    
-    print(f"\nLoading Visual Genome with lazy loading...")
-    print(f"Configuration: {config}")
+    from adapters.treeoflife_adapter import TreeOfLifeAdapter
     
     start_time = time.time()
     
-    try:
-        # Create adapter with lazy loading
-        dataset = VisualGenomeAdapter(**config)
-        
-        load_time = time.time() - start_time
-        after_load_memory = get_memory_usage()
-        after_samples_memory = after_load_memory  # Initialize for scope
-        
-        print(f"\n✅ Dataset loaded successfully!")
-        print(f"Load time: {load_time:.2f} seconds")
-        print(f"Memory after loading: {after_load_memory:.1f} MB")
-        print(f"Memory increase: {after_load_memory - initial_memory:.1f} MB")
-        print(f"Dataset size: {len(dataset)} samples")
-        print(f"Number of classes: {len(dataset.classes)}")
-        
-        # Test sample access
-        if len(dataset) > 0:
-            print(f"\n🔍 Testing sample access:")
-            
-            # Test first sample
-            print("Loading first sample...")
-            sample_start = time.time()
-            image, label = dataset[0]
-            sample_time = time.time() - sample_start
-            
-            print(f"Sample loaded in {sample_time:.3f} seconds")
-            print(f"Image shape: {image.size if hasattr(image, 'size') else 'N/A'}")
-            print(f"Label: {label}")
-            
-            # Test sample info
-            sample_info = dataset.get_sample_info(0)
-            print(f"Sample info: {sample_info}")
-            
-            # Test multiple samples to check caching
-            print(f"\n⚡ Testing caching with multiple samples:")
-            cache_test_start = time.time()
-            for i in range(min(5, len(dataset))):
-                _, _ = dataset[i]
-            cache_test_time = time.time() - cache_test_start
-            print(f"Loaded 5 samples in {cache_test_time:.3f} seconds")
-            
-            # Memory after sample loading
-            after_samples_memory = get_memory_usage()
-            print(f"Memory after loading samples: {after_samples_memory:.1f} MB")
-            
-        print(f"\n📊 Memory Efficiency Summary:")
-        print(f"  Initial memory: {initial_memory:.1f} MB")
-        print(f"  After dataset load: {after_load_memory:.1f} MB (+{after_load_memory - initial_memory:.1f} MB)")
-        if len(dataset) > 0:
-            print(f"  After sample loading: {after_samples_memory:.1f} MB (+{after_samples_memory - after_load_memory:.1f} MB)")
-        print(f"  Total memory increase: {get_memory_usage() - initial_memory:.1f} MB")
-        
-        # Show sample classes
-        if len(dataset.classes) > 0:
-            print(f"\n🏷️ Sample classes: {dataset.classes[:10]}...")
-        
-        print(f"\n✅ Lazy loading test completed successfully!")
-        
-    except Exception as e:
-        print(f"\n❌ Error during testing: {e}")
-        import traceback
-        traceback.print_exc()
-
-def main():
-    """Main test function."""
-    print("Visual Genome Lazy Loading Test")
-    print("This test demonstrates memory-efficient loading of large datasets.")
-    print("Note: Requires internet connection for first-time dataset download.\n")
+    # 创建adapter - 应该很快，不需要构建数据库
+    adapter = TreeOfLifeAdapter(
+        root_path='/mnt/d/data/treeoflife',
+        max_shards=1,  # 只处理1个shard
+        max_samples=10  # 只处理10个样本
+    )
     
-    # Check if CUDA is available
-    if torch.cuda.is_available():
-        print(f"🚀 CUDA available: {torch.cuda.get_device_name(0)}")
-    else:
-        print("💻 Using CPU")
+    init_time = time.time() - start_time
+    print(f"✅ Adapter初始化完成: {init_time:.2f}秒")
+    print(f"📊 加载了 {len(adapter)} 个样本")
     
-    test_lazy_loading()
+    # 测试几个样本
+    for i in range(min(3, len(adapter))):
+        image, label = adapter[i]
+        class_name = adapter.classes[label]
+        print(f"样本 {i}: 类别={class_name}, 图像大小={image.shape}")
+    
+    print("✅ 懒加载测试完成!")
+    return True
 
 if __name__ == "__main__":
-    main()
+    try:
+        test_lazy_loading()
+    except Exception as e:
+        print(f"❌ 测试失败: {e}")
+        import traceback
+        traceback.print_exc()

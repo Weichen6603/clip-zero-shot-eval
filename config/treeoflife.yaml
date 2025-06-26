@@ -1,0 +1,72 @@
+# TreeOfLife-10M Configuration - Lightweight Version (3 shards only)
+# 🚀 Quick testing with limited data download (~300MB vs ~3TB)
+
+# CLIP model configuration
+clip_model: "ViT-B/32"  # Options: RN50, RN101, RN50x4, RN50x16, ViT-B/32, ViT-B/16, ViT-L/14
+device: "cuda"  # cuda or cpu
+use_ensemble: true  # Whether to use multiple templates for text encoding
+
+# Evaluation settings
+batch_size: 32  # Optimized batch size for memory efficiency
+num_workers: 4  # Number of data loading workers
+save_predictions: false  # Save individual predictions (large files for this dataset)
+
+# Output settings
+output_dir: "./results/treeoflife_lightweight"
+save_results: true
+
+# Dataset configurations
+datasets:
+  # TreeOfLife-10M Lightweight Configuration (Limited Data)
+  - name: "TreeOfLife-10M-Lightweight"
+    type: "treeoflife"
+    root_path: "/mnt/d/data/treeoflife"  # Cache directory for HuggingFace datasets
+    split: "train"            # TreeOfLife-10M only has 'train' split
+    
+    # Taxonomic configuration
+    taxonomic_level: "species"        # Classification level: species, genus, family, order, class, phylum, kingdom
+    use_common_names: true            # Include common names in text templates
+    exclude_partial_labels: false    # Whether to exclude samples without full taxonomic hierarchy
+    
+    # Lightweight parameters - download only 3 shards (~300MB vs ~3TB)
+    max_shards: 3                     # Download only first 3 shards for quick testing
+    # max_samples: null               # Use all samples from the 3 shards (no artificial limit)
+    min_images_per_class: 1           # Minimum images per taxonomic class to include
+    use_precomputed_embeddings: true  # Use BioCLIP text embeddings when available
+    
+    # Alternative testing configurations:
+    
+    # 🧪 Ultra-light testing (for development/debugging):
+    # max_samples: 100
+    # min_images_per_class: 1
+    # taxonomic_level: "family"
+    
+    # 🔬 Small-scale evaluation (balanced testing):
+    # max_samples: 5000
+    # min_images_per_class: 3
+    # taxonomic_level: "genus"
+    
+    # 📊 Medium-scale evaluation (research quality):
+    # max_samples: 20000
+    # min_images_per_class: 5
+    # taxonomic_level: "species"
+    
+    # 🚀 Large-scale evaluation (within lightweight constraints):
+    # max_samples: null  # Use all samples from 3 shards
+    # min_images_per_class: 10
+    # taxonomic_level: "species"
+    
+    # Expected results (current lightweight config with 3 shards):
+    # - Samples: ~300,000 images (from 3 shards, ~100K each)
+    # - Classes: Varies by taxonomic_level (Species: ~thousands, Kingdom: ~12)
+    # - Dataset size: ~300MB (instead of 3TB full dataset)
+    # - Evaluation time: ~30-60 minutes (instead of days)
+    # - Memory usage: Moderate (streaming from 3 cached shards)
+    # - Perfect for: Algorithm development, quick CLIP evaluation, CI/CD testing
+    
+    # 💡 Performance optimization tips:
+    # - Start with taxonomic_level: "family" for faster testing
+    # - Increase to "genus" or "species" for finer-grained classification
+    # - Adjust min_images_per_class based on desired class balance
+    # - Enable use_precomputed_embeddings for BioCLIP text features
+    # - Monitor GPU memory with batch_size adjustments

@@ -121,6 +121,8 @@ class DatasetTemplates:
             "a clear photo of a {}.",
             "a good example of a {}.",
         ]
+    
+
 
 
 class DatasetAdapterRegistry:
@@ -176,6 +178,12 @@ def _register_adapters():
     try:
         from adapters.visual_genome_adapter import VisualGenomeAdapter
         DatasetAdapterRegistry.register('visual_genome', VisualGenomeAdapter)
+    except ImportError:
+        pass
+    
+    try:
+        from adapters.treeoflife_adapter import TreeOfLifeAdapter
+        DatasetAdapterRegistry.register('treeoflife', TreeOfLifeAdapter)
     except ImportError:
         pass
 
