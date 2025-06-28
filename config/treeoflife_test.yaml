@@ -29,7 +29,7 @@ datasets:
     taxonomic_level: "species"
     use_common_names: true
     exclude_partial_labels: false
-    min_images_per_class: 1
+    strict_label_filtering: false    # Whether to apply strict filtering of uncertain/confusing labels (default: false)
     min_images_per_class: 1
     use_precomputed_embeddings: true
     

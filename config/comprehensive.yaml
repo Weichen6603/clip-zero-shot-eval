@@ -69,3 +69,4 @@ datasets:
     split: "train"
     config_name: "train_small"
     taxonomic_level: "species"
+    strict_label_filtering: false    # Whether to apply strict filtering of uncertain/confusing labels (default: false)

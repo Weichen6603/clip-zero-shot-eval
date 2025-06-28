@@ -27,6 +27,7 @@ datasets:
     # Taxonomic configuration
     taxonomic_level: "species"           # Classification level: species, genus, family, order, class, phylum, kingdom
     exclude_partial_labels: false       # Whether to exclude samples without full taxonomic hierarchy
+    strict_label_filtering: false       # Whether to apply strict filtering of uncertain/confusing labels (default: false)
     
     # Full dataset parameters - all 73 shards (~3TB)
     # max_shards: null                   # Use all 73 shards (online/download complete dataset)

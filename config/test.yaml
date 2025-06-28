@@ -37,6 +37,7 @@ datasets:
     # Taxonomic configuration
     taxonomic_level: "species"        # Classification level: species, genus, family, order, class, phylum, kingdom
     exclude_partial_labels: false    # Whether to exclude samples without full taxonomic hierarchy
+    strict_label_filtering: false    # Whether to apply strict filtering of uncertain/confusing labels (default: false)
     
     # Set a reasonable sample limit for testing (null = use all available samples)
     max_samples: null                 # Use all train_small samples with true streaming (images loaded on-demand)

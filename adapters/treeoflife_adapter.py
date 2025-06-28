@@ -41,7 +41,7 @@ class TreeOfLifeAdapter(BaseDatasetAdapter):
                  max_samples: Optional[int] = None, taxonomic_level: str = "species",
                  use_common_names: bool = True, min_images_per_class: int = 1,
                  exclude_partial_labels: bool = False, use_precomputed_embeddings: bool = False,
-                 max_shards: Optional[int] = None, **kwargs):
+                 max_shards: Optional[int] = None, strict_label_filtering: bool = False, **kwargs):
         """
         Initialize TreeOfLife-10M adapter.
         
@@ -57,6 +57,7 @@ class TreeOfLifeAdapter(BaseDatasetAdapter):
             exclude_partial_labels: Whether to exclude images without full taxonomic labels
             use_precomputed_embeddings: Whether to use BioCLIP pre-computed text embeddings
             max_shards: Maximum number of data shards to download/use (None for all 73 shards)
+            strict_label_filtering: Whether to apply strict filtering of uncertain/confusing labels (default: False)
         """
         self.max_samples = max_samples
         self.taxonomic_level = taxonomic_level.lower()
@@ -65,6 +66,7 @@ class TreeOfLifeAdapter(BaseDatasetAdapter):
         self.exclude_partial_labels = exclude_partial_labels
         self.use_precomputed_embeddings = use_precomputed_embeddings
         self.max_shards = max_shards
+        self.strict_label_filtering = strict_label_filtering
         self.catalog_db_path = None  # Will hold SQLite database path
         
         # Validate taxonomic level
@@ -318,11 +320,7 @@ class TreeOfLifeAdapter(BaseDatasetAdapter):
             # Try to get real taxonomy from catalog database
             taxonomy = self._get_taxonomy_from_catalog(sample_id)
             
-            if taxonomy:
-                # Only show first few successful catalog lookups
-                if idx < 3:
-                    print(f"✅ Found catalog entry for {sample_id}: {taxonomy.get('species', 'unknown')}")
-            else:
+            if not taxonomy:
                 # For TreeOfLife, we need real taxonomic data
                 if idx < 10:  # Only show warning for first few missing entries
                     print(f"⚠️  No catalog entry found for sample {sample_id}")
@@ -360,7 +358,7 @@ class TreeOfLifeAdapter(BaseDatasetAdapter):
             return None
 
     def _get_taxonomic_label_from_dict(self, taxonomy: Dict[str, str]) -> Optional[str]:
-        """Extract taxonomic label at the specified level with strict filtering."""
+        """Extract taxonomic label at the specified level with optional strict filtering."""
         level_map = {
             'kingdom': 'kingdom',
             'phylum': 'phylum', 
@@ -377,56 +375,62 @@ class TreeOfLifeAdapter(BaseDatasetAdapter):
         field_name = level_map[self.taxonomic_level]
         label = str(taxonomy.get(field_name, '')).strip()
         
-        # Strict filtering: Return None for uncertain/confusing/hybrid labels
-        uncertain_indicators = [
-            '', 'unknown', 'sp.', 'n/a', 'nan', 'none', 'null',
-            'confusor', 'confuse', 'uncertain', 'unclear', 'ambiguous',
-            'unidentified', 'unidentifiable', 'indeterminate', 'questionable'
-        ]
-        
-        if not label or label.lower() in uncertain_indicators:
+        # Basic filtering: always filter empty or obviously invalid labels
+        basic_invalid = ['', 'nan', 'none', 'n/a', 'null']
+        if not label or label.lower() in basic_invalid:
             return None
         
-        # Filter hybrid indicators (x species, hybrids)
-        if 'x ' in label.lower() or ' x ' in label.lower():
-            return None
-        
-        # Filter uncertain species indicators
-        if 'sp.' in label or 'spp.' in label:
-            return None
+        # Apply strict filtering only if enabled
+        if self.strict_label_filtering:
+            # Strict filtering: Return None for uncertain/confusing/hybrid labels
+            uncertain_indicators = [
+                'unknown', 'sp.', 'confusor', 'confuse', 'uncertain', 'unclear', 'ambiguous',
+                'unidentified', 'unidentifiable', 'indeterminate', 'questionable'
+            ]
             
-        # Filter specimens with cf. (compare with), aff. (affinity with) - uncertain ID
-        if 'cf.' in label.lower() or 'aff.' in label.lower():
-            return None
+            if label.lower() in uncertain_indicators:
+                return None
             
-        # Filter complex species (species complex, species group)
-        if 'complex' in label.lower() or 'group' in label.lower():
-            return None
+            # Filter hybrid indicators (x species, hybrids)
+            if 'x ' in label.lower() or ' x ' in label.lower():
+                return None
             
-        # Filter near/close to (nr./near) indicators
-        if 'nr.' in label.lower() or 'near' in label.lower():
-            return None
-            
-        # Filter subspecies indicators that suggest uncertainty
-        if label.endswith(' ssp.') or ' ssp. ' in label:
-            return None
-            
-        # Additional filters for specific taxonomic levels
-        if self.taxonomic_level == 'species':
-            # For species level, be extra strict
-            # Filter names with numbers (often indicate forms/varieties/uncertain status)
-            if any(char.isdigit() for char in label):
+            # Filter uncertain species indicators
+            if 'sp.' in label or 'spp.' in label:
                 return None
                 
-            # Filter very short species names (likely incomplete)
-            parts = label.split()
-            if len(parts) < 2:  # Species should have at least genus + species
+            # Filter specimens with cf. (compare with), aff. (affinity with) - uncertain ID
+            if 'cf.' in label.lower() or 'aff.' in label.lower():
                 return None
                 
-            # Filter if genus or species part contains uncertain indicators
-            for part in parts:
-                if any(indicator in part.lower() for indicator in ['sp', 'cf', 'aff', 'nr']):
+            # Filter complex species (species complex, species group)
+            if 'complex' in label.lower() or 'group' in label.lower():
+                return None
+                
+            # Filter near/close to (nr./near) indicators
+            if 'nr.' in label.lower() or 'near' in label.lower():
+                return None
+                
+            # Filter subspecies indicators that suggest uncertainty
+            if label.endswith(' ssp.') or ' ssp. ' in label:
+                return None
+                
+            # Additional filters for specific taxonomic levels
+            if self.taxonomic_level == 'species':
+                # For species level, be extra strict
+                # Filter names with numbers (often indicate forms/varieties/uncertain status)
+                if any(char.isdigit() for char in label):
                     return None
+                    
+                # Filter very short species names (likely incomplete)
+                parts = label.split()
+                if len(parts) < 2:  # Species should have at least genus + species
+                    return None
+                    
+                # Filter if genus or species part contains uncertain indicators
+                for part in parts:
+                    if any(indicator in part.lower() for indicator in ['sp', 'cf', 'aff', 'nr']):
+                        return None
         
         return label
     

@@ -31,6 +31,7 @@ datasets:
     # Taxonomic configuration
     taxonomic_level: "species"        # Classification level: species, genus, family, order, class, phylum, kingdom
     exclude_partial_labels: false    # Whether to exclude samples without full taxonomic hierarchy
+    strict_label_filtering: false    # Whether to apply strict filtering of uncertain/confusing labels (default: false)
     
     # train_small is already a curated lightweight subset
     max_samples: null                 # Use all train_small samples (~953K images)

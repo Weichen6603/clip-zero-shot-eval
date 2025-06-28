@@ -380,7 +380,7 @@ huggingface-cli login
   - **Configurable Taxonomy**: Choose classification level from species to kingdom
   - **Multi-source Data**: Combines expert-labeled museum specimens, field photos, and curated images
   - **Biological Diversity**: Covers animals, plants, fungi, and microorganisms
-  - **Strict label filtering**: All uncertain/confusing/hybrid labels (e.g., `confusor`, `sp.`, `x`, `unknown`, `n/a`, `nan`, `none`) are automatically filtered out during evaluation to ensure scientific validity and reproducibility.
+  - **Configurable label filtering**: By default, only empty/null labels are filtered. You can enable strict filtering of uncertain/confusing/hybrid labels (e.g., `confusor`, `sp.`, `x`, `unknown`) by setting `strict_label_filtering: true` in your config to ensure scientific validity and reproducibility.
 
 ---
 
@@ -414,6 +414,7 @@ huggingface-cli login
   # Taxonomic configuration
   taxonomic_level: "species"            # species, genus, family, order, class, phylum, kingdom
   exclude_partial_labels: false        # Filter samples without full taxonomy
+  strict_label_filtering: false        # Enable strict filtering of uncertain/confusing labels (default: false)
   
   # Version-specific parameters
   min_images_per_class: 1               # Minimum samples per taxonomic class
