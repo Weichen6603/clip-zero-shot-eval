@@ -36,7 +36,6 @@ datasets:
     
     # Taxonomic configuration
     taxonomic_level: "species"        # Classification level: species, genus, family, order, class, phylum, kingdom
-    use_common_names: true            # Include common names in text templates
     exclude_partial_labels: false    # Whether to exclude samples without full taxonomic hierarchy
     
     # train_small is already a curated lightweight subset

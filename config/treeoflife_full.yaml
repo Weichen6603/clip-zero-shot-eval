@@ -20,6 +20,7 @@ datasets:
   # TreeOfLife-10M Full Dataset Configuration
   - name: "TreeOfLife-10M-Full"
     type: "treeoflife"
+    streaming: true
     root_path: "/mnt/d/data/treeoflife"  # Cache directory for HuggingFace datasets
     split: "train"            # TreeOfLife-10M only has 'train' split
     
