@@ -2,6 +2,15 @@
 
 A flexible framework for evaluating CLIP models on zero-shot classification tasks across multiple datasets.
 
+**Included datasets**:
+- CIFAR-10 (10 classes)
+- CIFAR-100 Fine (100 classes) 
+- CIFAR-100 Coarse (20 classes)
+- SUN397 (397 scene categories)
+- ImageNet-1K (1,000 object classes)
+- Visual Genome Objects with Synsets (2,000+ semantic object types)
+- TreeOfLife-10M (biological taxa)
+
 ## Features
 
 - **Modular Design**: Easy to add new datasets through adapter pattern with centralized template management
@@ -80,68 +89,18 @@ python evaluate.py config/visual_genome.yaml
 
 #### TreeOfLife-10M (454K+ biological taxa, lightweight testing)
 ```bash
-# Lightweight testing (recommended - 1,000 images, ~150MB)
+# Lightweight testing (recommended - use official train_small split, ~265GB)
 python evaluate.py config/treeoflife.yaml
 
-# Quick development testing (100 images, ~15MB)
-# Edit config to set max_samples: 100
+# Full dataset version (all data, ~3TB)
+python evaluate.py config/treeoflife_full.yaml
 ```
-- **Dataset**: TreeOfLife-10M via HuggingFace (train_small subset)
-- **Lightweight Approach**: Uses 1M image subset instead of full 10M+ dataset
+- **Dataset**: TreeOfLife-10M via HuggingFace 
 - **Classes**: 454,000+ taxa across the entire tree of life (configurable taxonomic level)
 - **Sources**: iNaturalist21, BIOSCAN-1M, Encyclopedia of Life
-- **Features**: 
-  - **Zero-shot ready**: Pre-computed BioCLIP text embeddings available
-  - **Scalable testing**: 100 images (dev) → 1,000 images (testing) → 1M images (research)
-  - **Fast loading**: train_small subset (~150-200GB vs 1.9TB full dataset)
-  - **Lazy loading**: Only metadata in memory, images loaded on-demand
-- **Storage**: ~150-200MB for 1,000 images (vs 1.9TB full dataset)
-
-## 🚀 Lightweight Zero-Shot Testing (Recommended)
-
-For quick evaluation and development, we recommend starting with lightweight configurations:
-
-### TreeOfLife-10M Lightweight Testing Path
-
-**✅ Goal**: Low-cost zero-shot classification experiments  
-**✅ Method**: Image features + text similarity (no model training)  
-**✅ Dataset**: `train_small` subset + BioCLIP text embeddings  
-**✅ Storage**: ~150-200MB instead of 1.9TB
-
-#### Quick Start Commands
-
-```bash
-# 🚀 Ultra-light testing (3 shards, 300 images, ~300MB, 5-10 min) - Perfect for dev/debug
-python evaluate.py config/treeoflife_ultralight.yaml
-
-# 🔬 Standard lightweight testing (5 shards, 1,000 images, ~500MB, 10-20 min) - Recommended
-python evaluate.py config/treeoflife.yaml
-
-# 📊 Custom lightweight testing
-python test_lightweight.py --samples 100
-
-# ⚡ Quick test without CLIP loading (dataset validation only)
-python test_lightweight.py --skip-clip --samples 50
-```
-
-#### Testing Strategy
-
-| Scale | Shards | Images | Storage | Time | Use Case |
-|-------|--------|--------|---------|------|----------|
-| **Ultra-light** | 3 | 300 | ~300MB | 5-10 min | Algorithm development, debugging |
-| **Standard** | 5 | 1,000 | ~500MB | 10-20 min | Method evaluation, CI/CD testing |
-| **Research** | 10 | 20,000 | ~1GB | 30-60 min | Paper results, model comparison |
-| **Full** | 73 | 1M+ | 150-200GB | Hours | Production evaluation |
-
-#### Benefits of Lightweight Approach
-
-- **🔄 Quick iteration**: Test algorithm changes in minutes, not hours
-- **💾 Ultra-low storage**: Download only 3-5 shards (~300-500MB) vs full dataset (3TB)
-- **⚡ Fast loading**: Uses pre-filtered `train_small` subset with shard limiting
-- **🧠 Low memory**: Lazy loading keeps only metadata in RAM
-- **📊 Representative**: Subset is uniformly sampled from full dataset
-- **🎯 Zero-shot focused**: Uses pre-computed BioCLIP text embeddings
-- **🛠️ Configurable**: Easily adjust number of shards (3 for dev, 5 for testing, 10+ for research)
+- **Lightweight mode**: Uses the official `train_small` split (953K images, ~265GB, balanced and curated)
+- **Full mode**: Uses the full `train` split (9.5M images, ~3TB)
+- **Label filtering**: All uncertain/confusing/hybrid labels (e.g., `confusor`, `sp.`, `x`, `unknown`, `n/a`, `nan`, `none`) are automatically filtered out during evaluation to ensure scientific validity and reproducibility.
 
 ### Custom Configuration
 
@@ -150,6 +109,16 @@ For custom settings, modify any config file or create your own:
 ```bash
 python evaluate.py your_custom_config.yaml
 ```
+
+**Available configurations**:
+- `config/comprehensive.yaml` - All datasets except TreeOfLife-Full (recommended for benchmarking)
+- `config/cifar10.yaml` - CIFAR-10 only
+- `config/cifar100.yaml` - CIFAR-100 (both fine and coarse labels)
+- `config/sun397.yaml` - SUN397 scene recognition
+- `config/imagenet.yaml` - ImageNet-1K validation set
+- `config/visual_genome.yaml` - Visual Genome with WordNet synsets
+- `config/treeoflife.yaml` - TreeOfLife-10M lightweight version
+- `config/treeoflife_full.yaml` - TreeOfLife-10M full dataset (research quality)
 
 ### ImageNet-1K Detailed Setup
 
@@ -291,11 +260,9 @@ Monitor your system resources and adjust:
   - Complete ImageNet-1K validation set (50,000 images)
   - Full 1000-class taxonomy with synset mappings
   - Automatic caching to local storage
-  - WSL/Windows cross-platform support
 - **Setup Requirements**:
   1. **Authentication**: `huggingface-cli login`
   2. **Dataset Access**: Request access to `imagenet-1k` on HuggingFace
-  3. **Storage**: ~7GB cache space required
 
 #### Visual Genome
 - **Classes**: 2,000+ unique object types in rich visual scenes
@@ -318,7 +285,7 @@ Monitor your system resources and adjust:
     max_samples: null        # Use all samples (~108K) or limit (e.g., 10000)
     min_objects: 1           # Minimum objects per image (filter empty images)
     max_objects: null        # Maximum objects per image (null = no limit)
-    use_synsets: false       # Use object names (false) vs WordNet synsets (true)
+    use_synsets: true       # Use object names (false) vs WordNet synsets (true)(recommmend)
   ```
 - **Parameter Guide**:
   - **`max_samples`**: Control dataset size for faster testing or full evaluation
@@ -330,7 +297,6 @@ Monitor your system resources and adjust:
     - Set `null` for no limit (include all complexity levels)
     - Set `20-30` for balanced complexity
   - **`use_synsets`**: Choose label type (typically `false` for readability)
-- **Expected Results** (full dataset):
   - **Samples**: ~80,000-100,000 images (after filtering)
   - **Classes**: 2,000-3,000 unique object types
   - **Memory Usage**: Low (thanks to lazy loading implementation)
@@ -342,8 +308,7 @@ TreeOfLife-10M is the largest ML-ready biological dataset with 10+ million image
 
 ##### Option 1: Lightweight Version (Recommended for Testing)
 - **Configuration File**: `config/treeoflife.yaml`
-- **Dataset Size**: ~300MB (3 shards only)
-- **Evaluation Time**: 30-60 minutes
+- **Dataset Size**: ~265GB (official `train_small` split, 953K images)
 - **Use Case**: Algorithm development, quick testing, CI/CD
 
 ```bash
@@ -351,14 +316,14 @@ python evaluate.py config/treeoflife.yaml
 ```
 
 **Features**:
-- Downloads only first 3 shards (~100K images each)
-- Uses all samples from the 3 shards (no artificial limits)
+- Uses official `train_small` split for efficient testing
 - Perfect for rapid prototyping and testing
 - Requires HuggingFace authentication: `huggingface-cli login`
+- **Ultra-fast taxonomy lookup**: The adapter loads the entire `catalog.csv` (taxonomic metadata, ~1.5GB) into memory as a pandas DataFrame for O(1) sample-to-taxonomy mapping. This enables extremely fast and scalable evaluation, at the cost of moderate RAM usage (typically 2-3GB peak for catalog; images are still streamed/lazy loaded).
 
 ##### Option 2: Full Dataset Version (Research Quality)
 - **Configuration File**: `config/treeoflife_full.yaml`
-- **Dataset Size**: ~3TB (all 73 shards)
+- **Dataset Size**: ~3TB (all data, ~9.5M images)
 - **Evaluation Time**: Days to weeks
 - **Use Case**: Research publications, comprehensive evaluation
 
@@ -371,6 +336,7 @@ python evaluate.py config/treeoflife_full.yaml
 - All 454,000+ taxa available
 - Suitable for publication-quality research
 - Requires HuggingFace authentication: `huggingface-cli login`
+- **Ultra-fast taxonomy lookup**: Same as above; catalog.csv is loaded fully into memory for all samples.
 
 ##### Authentication Setup
 
@@ -390,10 +356,11 @@ huggingface-cli login
 - **Authentication**: Requires HuggingFace login for dataset access
 - **Usage**: `type: "treeoflife"`
 - **Features**:
-  - **Streaming Data Loading**: Memory-efficient loading for massive biological dataset
+  - **Streaming Data Loading**: Images are streamed from HuggingFace for memory efficiency; only taxonomy metadata is fully loaded into RAM.
   - **Configurable Taxonomy**: Choose classification level from species to kingdom
   - **Multi-source Data**: Combines expert-labeled museum specimens, field photos, and curated images
   - **Biological Diversity**: Covers animals, plants, fungi, and microorganisms
+  - **Strict label filtering**: All uncertain/confusing/hybrid labels (e.g., `confusor`, `sp.`, `x`, `unknown`, `n/a`, `nan`, `none`) are automatically filtered out during evaluation to ensure scientific validity and reproducibility.
 
 ##### Configuration Parameters (Both Versions)
 ```yaml
@@ -419,38 +386,11 @@ huggingface-cli login
   - `"family"`: Broader categories (manageable class count for testing)
   - `"kingdom"`: Coarsest level (animals, plants, fungi, etc.)
 - **`max_shards`**: Control dataset size
-  - `3`: Lightweight version (~300MB, 3 shards)
-  - `null`: Full version (~3TB, all 73 shards)
+  - `3`: Lightweight version (~265GB, `train_small` split)
+  - `null`: Full version (~3TB, all data)
 - **`min_images_per_class`**: Filter rare taxa
   - Higher values = fewer but better-represented classes
   - Lower values = more taxonomic diversity but potential class imbalance
-
-##### Expected Results Comparison
-
-| Version | Data Size | Samples | Classes (Species) | Time | Use Case |
-|---------|-----------|---------|-------------------|------|----------|
-| **Lightweight** | ~300MB | ~300K | ~thousands | 30-60 min | Testing, Development |
-| **Full** | ~3TB | ~10M+ | ~454K+ | Days-Weeks | Research, Publications |
-
-##### Hardware Requirements
-- **Lightweight Version**: 
-  - Storage: 1GB+ available space
-  - RAM: 8GB+ recommended
-  - GPU: Any modern GPU
-- **Full Version**:
-  - Storage: 3TB+ available space
-  - RAM: 32GB+ recommended
-  - GPU: High-end GPU (V100, A100, RTX 4090, etc.)
-  - Network: High-speed internet for initial download
-
-##### Dataset Scope (Both Versions)
-This is the largest ML-ready biological dataset, covering:
-- **Animals**: Mammals, birds, reptiles, amphibians, fish, insects, marine life
-- **Plants**: Flowering plants, trees, ferns, mosses, algae
-- **Fungi**: Mushrooms, molds, yeasts, lichens
-- **Microorganisms**: Bacteria, protists, archaea
-
-**Use Cases**: Ideal for biodiversity research, conservation applications, and biological foundation model evaluation
 
 ## Output Structure
 
@@ -473,7 +413,7 @@ clip-zero-shot-eval/
 │   ├── imagenet_classes.py     # ImageNet class mappings and synsets
 │   ├── sun397_adapter.py       # SUN397 scene classification adapter
 │   ├── visual_genome_adapter.py # Visual Genome objects adapter (lazy loading)
-│   └── treeoflife_adapter.py   # TreeOfLife-10M dataset adapter (lazy loading)
+│   └── treeoflife_adapter.py   # TreeOfLife-10M dataset adapter (loads catalog.csv fully into memory)
 ├── config/                     # Pre-configured evaluation settings
 │   ├── cifar10.yaml           # CIFAR-10 evaluation configuration
 │   ├── cifar100.yaml          # CIFAR-100 evaluation configuration  

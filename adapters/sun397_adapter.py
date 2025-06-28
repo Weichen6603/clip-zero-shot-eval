@@ -72,7 +72,8 @@ class SUN397Adapter(BaseDatasetAdapter):
             max_samples = kwargs.get('max_samples', None)
             dataset_length = len(dataset) if hasattr(dataset, '__len__') else 87003
             
-            if max_samples and max_samples < dataset_length:
+            # Only apply max_samples limit if not None
+            if max_samples is not None and max_samples < dataset_length:
                 print(f"Limited to {max_samples} samples for testing")
                 actual_length = max_samples
             else:

@@ -14,4 +14,4 @@ datasets:
   config_name: objects_v1.2.0
   min_objects: 1
   max_objects: null
-  use_synsets: false
+  use_synsets: true

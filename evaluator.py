@@ -162,13 +162,17 @@ class ZeroShotEvaluator:
     def evaluate_multiple_datasets(self,
                                    datasets: Dict[str, BaseDatasetAdapter],
                                    batch_size: int = 32,
-                                   save_dir: Optional[str] = None) -> Dict[str, Dict[str, Any]]:
+                                   save_dir: Optional[str] = None,
+                                   save_individual: bool = False,
+                                   config=None) -> Dict[str, Dict[str, Any]]:
         """Evaluate on multiple datasets.
 
         Args:
             datasets: Dictionary mapping dataset names to dataset adapters
             batch_size: Batch size for evaluation
-            save_dir: Directory to save results
+            save_dir: Directory to save results (for comprehensive summary)
+            save_individual: Whether to save each dataset to its own directory
+            config: Configuration object to save with individual results
 
         Returns:
             Dictionary mapping dataset names to their results
@@ -190,11 +194,15 @@ class ZeroShotEvaluator:
                 print(f"  Top-5 Accuracy: {results['top5_accuracy']:.2%}")
                 print(f"  Mean Per-Class Accuracy: {results['mean_per_class_accuracy']:.2%}")
 
+                # Save individual dataset results immediately
+                if save_individual:
+                    self._save_individual_dataset_results(name, results, config)
+
             except Exception as e:
                 print(f"Error evaluating {name}: {e}")
                 all_results[name] = {'error': str(e)}
 
-        # Save results if directory provided
+        # Save comprehensive results if directory provided
         if save_dir:
             os.makedirs(save_dir, exist_ok=True)
 
@@ -209,9 +217,43 @@ class ZeroShotEvaluator:
             summary_file = os.path.join(save_dir, f"summary_{timestamp}.txt")
             self._save_summary(all_results, summary_file)
 
-            print(f"\nResults saved to {save_dir}")
+            print(f"\nComprehensive results saved to {save_dir}")
 
         return all_results
+
+    def _save_individual_dataset_results(self, dataset_name: str, results: Dict[str, Any], config=None):
+        """Save individual dataset results to its corresponding directory, using root_path for naming."""
+        # Try to get root_path from results['model_info'] or results dict
+        root_path = None
+        if 'root_path' in results:
+            root_path = results['root_path']
+        elif 'model_info' in results and 'root_path' in results['model_info']:
+            root_path = results['model_info']['root_path']
+        # Fallback: try to infer from dataset_name
+        if not root_path:
+            # fallback: use dataset_name
+            dir_name = dataset_name.lower().replace('-', '_') + '_evaluation'
+        else:
+            # Use last part of root_path as directory name
+            last_part = os.path.basename(os.path.normpath(root_path))
+            dir_name = f"{last_part}_evaluation"
+        individual_save_dir = f"./results/{dir_name}"
+        os.makedirs(individual_save_dir, exist_ok=True)
+        
+        # Save config file if provided
+        if config:
+            from config_parser import ConfigParser
+            config_save_path = os.path.join(individual_save_dir, 'config_used.yaml')
+            ConfigParser.save_config(config, config_save_path)
+        
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        results_file = os.path.join(individual_save_dir, f"results_{timestamp}.json")
+        with open(results_file, 'w') as f:
+            json.dump({dataset_name: results}, f, indent=2)
+        summary_file = os.path.join(individual_save_dir, f"summary_{timestamp}.txt")
+        self._save_summary({dataset_name: results}, summary_file)
+        print(f"  → Results saved to {individual_save_dir}")
+        return individual_save_dir
 
     def _save_summary(self, results: Dict[str, Dict[str, Any]], filepath: str):
         """Save a human-readable summary of results."""
@@ -238,4 +280,4 @@ class ZeroShotEvaluator:
                     acc = result['accuracy']
                     top5 = result['top5_accuracy'] 
                     per_class = result['mean_per_class_accuracy']
-                    f.write(f"{dataset_name:<30} {acc:<10.2f} {top5:<10.2f} {per_class:<10.2f}\n")
+                    f.write(f"{dataset_name:<30} {acc:<10.2%} {top5:<10.2%} {per_class:<10.2%}\n")

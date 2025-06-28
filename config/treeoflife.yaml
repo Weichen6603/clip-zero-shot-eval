@@ -1,5 +1,15 @@
-# TreeOfLife-10M Configuration - Lightweight Version (3 shards only)
-# 🚀 Quick testing with limited data download (~300MB vs ~3TB)
+# TreeOfLife-10M Configuration - Using Official train_small Split
+# 🎯 SOLUTION: Uses official train_small split to avoid empty shard problems
+# 
+# Previous issues with max_shards=3:
+# - First 3 shards were empty/incomplete (0 taxonomy data)
+# - Caused "confusor" labeling and slow processing
+# 
+# train_small advantages:
+# - Official curated subset (953K images vs 9.5M in full train)
+# - Balanced taxonomic distribution
+# - ~265GB download (vs 3TB for full dataset)
+# - No shard selection needed
 
 # CLIP model configuration
 clip_model: "ViT-B/32"  # Options: RN50, RN101, RN50x4, RN50x16, ViT-B/32, ViT-B/16, ViT-L/14
@@ -8,7 +18,7 @@ use_ensemble: true  # Whether to use multiple templates for text encoding
 
 # Evaluation settings
 batch_size: 32  # Optimized batch size for memory efficiency
-num_workers: 4  # Number of data loading workers
+num_workers: 8  # Number of data loading workers
 save_predictions: false  # Save individual predictions (large files for this dataset)
 
 # Output settings
@@ -17,20 +27,19 @@ save_results: true
 
 # Dataset configurations
 datasets:
-  # TreeOfLife-10M Lightweight Configuration (Limited Data)
-  - name: "TreeOfLife-10M-Lightweight"
+  # TreeOfLife-10M using official train_small split (953K images, ~265GB)
+  - name: "TreeOfLife-10M-TrainSmall"
     type: "treeoflife"
     root_path: "/mnt/d/data/treeoflife"  # Cache directory for HuggingFace datasets
-    split: "train"            # TreeOfLife-10M only has 'train' split
+    split: "train_small"      # Use official lightweight split instead of limiting shards
     
     # Taxonomic configuration
     taxonomic_level: "species"        # Classification level: species, genus, family, order, class, phylum, kingdom
     use_common_names: true            # Include common names in text templates
     exclude_partial_labels: false    # Whether to exclude samples without full taxonomic hierarchy
     
-    # Lightweight parameters - download only 3 shards (~300MB vs ~3TB)
-    max_shards: 3                     # Download only first 3 shards for quick testing
-    # max_samples: null               # Use all samples from the 3 shards (no artificial limit)
+    # train_small is already a curated lightweight subset
+    max_samples: null                 # Use all train_small samples (~953K images)
     min_images_per_class: 1           # Minimum images per taxonomic class to include
     use_precomputed_embeddings: true  # Use BioCLIP text embeddings when available
     
@@ -59,7 +68,7 @@ datasets:
     # Expected results (current lightweight config with 3 shards):
     # - Samples: ~300,000 images (from 3 shards, ~100K each)
     # - Classes: Varies by taxonomic_level (Species: ~thousands, Kingdom: ~12)
-    # - Dataset size: ~300MB (instead of 3TB full dataset)
+    # - Dataset size: ~90GB (instead of 3TB full dataset)
     # - Evaluation time: ~30-60 minutes (instead of days)
     # - Memory usage: Moderate (streaming from 3 cached shards)
     # - Perfect for: Algorithm development, quick CLIP evaluation, CI/CD testing

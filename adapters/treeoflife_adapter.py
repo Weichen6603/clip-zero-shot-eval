@@ -128,20 +128,51 @@ class TreeOfLifeAdapter(BaseDatasetAdapter):
         
         print("🔍 Processing samples with real taxonomic labels...")
         
+        # Estimate total samples for progress tracking
+        estimated_total = None
+        if self.max_samples:
+            estimated_total = min(self.max_samples * 2, 10000)  # Conservative estimate
+            print(f"🎯 Target: {self.max_samples} valid samples (scanning up to {estimated_total} total)")
+        elif self.max_shards:
+            estimated_total = self.max_shards * 140000  # ~140K samples per shard
+            print(f"🎯 Processing {self.max_shards} shards (~{estimated_total//1000}K samples)")
+        else:
+            estimated_total = 10000  # Default estimate for progress display
+            print(f"🎯 Processing samples (estimated ~{estimated_total//1000}K samples)")
+        
+        try:
+            from tqdm import tqdm
+            progress_bar = tqdm(
+                total=estimated_total,
+                desc="Processing samples",
+                unit="samples",
+                bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]"
+            )
+        except ImportError:
+            progress_bar = None
+            print("💡 Install tqdm for better progress tracking: pip install tqdm")
+        
         for idx, sample in enumerate(dataset):
             processed_count += 1
+            
+            # Update progress bar
+            if progress_bar:
+                progress_bar.update(1)
+                # Update description with current stats
+                if processed_count % 100 == 0:
+                    progress_bar.set_description(f"Processing samples (found {len(samples)} valid)")
             
             # Check shard limit (approximate)
             if self.max_shards is not None:
                 # TreeOfLife-10M has ~140K samples per shard (10M / 73 shards)
                 estimated_shard = processed_count // 140000
                 if estimated_shard >= self.max_shards:
-                    print(f"📊 Reached max_shards limit ({self.max_shards}), stopping at sample {processed_count}")
+                    print(f"\n📊 Reached max_shards limit ({self.max_shards}), stopping at sample {processed_count}")
                     break
             
-            # Check sample limit
+            # Check sample limit (only if max_samples is not None)
             if self.max_samples is not None and len(samples) >= self.max_samples:
-                print(f"📊 Reached max_samples limit ({self.max_samples})")
+                print(f"\n📊 Reached max_samples limit ({self.max_samples})")
                 break
             
             # Extract sample information
@@ -150,20 +181,23 @@ class TreeOfLifeAdapter(BaseDatasetAdapter):
                 if sample_info:
                     samples.append(sample_info)
                     
-                # Progress indicator (much less verbose)
-                if processed_count % 5000 == 0:
-                    elapsed_time = time.time() - start_time
-                    print(f"📥 Processed {processed_count} samples, found {len(samples)} valid samples ({elapsed_time:.1f}s)")
-                    
-                # Early exit if we have enough samples for testing
-                if len(samples) >= (self.max_samples or 1000):
-                    print(f"✅ Found enough samples for evaluation ({len(samples)}), stopping")
-                    break
+                # Early exit for testing (should not trigger if max_samples is None)
+                # Remove or comment out the following block:
+                # if len(samples) >= (self.max_samples or 1000):
+                #     print(f"\n✅ Found enough samples for evaluation ({len(samples)}), stopping")
+                #     break
                     
             except Exception as e:
                 if idx < 3:  # Show details for first few errors
-                    print(f"⚠️ Error processing sample {idx}: {e}")
+                    if progress_bar:
+                        progress_bar.write(f"⚠️ Error processing sample {idx}: {e}")
+                    else:
+                        print(f"⚠️ Error processing sample {idx}: {e}")
                 continue
+        
+        # Close progress bar
+        if progress_bar:
+            progress_bar.close()
         
         if not samples:
             print("⚠️ No valid samples found, this might indicate data format issues")
@@ -185,27 +219,26 @@ class TreeOfLifeAdapter(BaseDatasetAdapter):
             sample_id = sample.get('__key__', f'sample_{idx}')
             sample_url = sample.get('__url__', '')
             
-            # Try to get real taxonomy from catalog database first
+            # Try to get real taxonomy from catalog database
             taxonomy = self._get_taxonomy_from_catalog(sample_id)
-            
-            if taxonomy:
-                # Only show first few successful catalog lookups
-                if idx < 3:
-                    print(f"✅ Found catalog entry for {sample_id}: {taxonomy.get('species', 'unknown')}")
-            else:
-                # Fall back to pseudo-random classification
-                taxonomy = self._extract_taxonomy_from_url(sample_url, sample_id)
-                # Only show first few fallbacks
-                if idx < 3:
-                    print(f"⚠️  Using fallback classification for {sample_id}")
-            
             if not taxonomy:
-                return None
+                # Error: cannot proceed without real taxonomic data
+                error_msg = (
+                    f"❌ Failed to retrieve taxonomic information for sample {sample_id}. "
+                    f"This indicates either:\n"
+                    f"  1. catalog.csv download failed\n"
+                    f"  2. catalog.csv is incomplete or corrupted\n"
+                    f"  3. Sample ID format has changed\n"
+                    f"TreeOfLife evaluation requires real taxonomic labels and cannot proceed with placeholder data."
+                )
+                print(error_msg)
+                raise ValueError(error_msg)
             
             # Extract taxonomic label at specified level
             taxonomic_label = self._get_taxonomic_label_from_dict(taxonomy)
             if not taxonomic_label:
                 return None
+    
             
             # Skip if excluding partial labels and sample doesn't have full taxonomy
             if self.exclude_partial_labels and not self._has_full_taxonomy_from_dict(taxonomy):
@@ -227,109 +260,9 @@ class TreeOfLifeAdapter(BaseDatasetAdapter):
             if idx < 3:  # Show details for first few errors only
                 print(f"⚠️ Error processing sample {idx}: {e}")
             return None
-    
-    def _extract_taxonomy_from_url(self, url: str, sample_id: str) -> Optional[Dict[str, str]]:
-        """Extract taxonomic information from TreeOfLife-10M URL or sample ID."""
-        # TreeOfLife-10M streaming format doesn't include taxonomic labels directly
-        # Create meaningful classification by using pseudo-random assignment based on sample ID
-        
-        taxonomy = {
-            'kingdom': '',
-            'phylum': '',
-            'class': '',
-            'order': '',
-            'family': '',
-            'genus': '',
-            'species': '',
-            'common': ''
-        }
-        
-        # Use hash of sample_id for consistent pseudo-random assignment
-        import hashlib
-        hash_value = int(hashlib.md5(sample_id.encode()).hexdigest()[:8], 16)
-        
-        # Extract image set number for additional diversity
-        image_set_num = 1  # default
-        if 'image_set_' in url:
-            try:
-                import re
-                match = re.search(r'image_set_(\d+)', url)
-                if match:
-                    image_set_num = int(match.group(1))
-            except:
-                pass
-        
-        # Create diverse biological categories based on hash and image set
-        category_id = (hash_value + image_set_num) % 10  # 10 different categories
-        
-        if category_id == 0:
-            # Mammals
-            taxonomy['kingdom'] = 'Animalia'
-            taxonomy['phylum'] = 'Chordata'
-            taxonomy['class'] = 'Mammalia'
-            taxonomy['species'] = 'Mammals'
-        elif category_id == 1:
-            # Birds
-            taxonomy['kingdom'] = 'Animalia'
-            taxonomy['phylum'] = 'Chordata'
-            taxonomy['class'] = 'Aves'
-            taxonomy['species'] = 'Birds'
-        elif category_id == 2:
-            # Fish
-            taxonomy['kingdom'] = 'Animalia'
-            taxonomy['phylum'] = 'Chordata'
-            taxonomy['class'] = 'Actinopterygii'
-            taxonomy['species'] = 'Fish'
-        elif category_id == 3:
-            # Reptiles
-            taxonomy['kingdom'] = 'Animalia'
-            taxonomy['phylum'] = 'Chordata'
-            taxonomy['class'] = 'Reptilia'
-            taxonomy['species'] = 'Reptiles'
-        elif category_id == 4:
-            # Insects
-            taxonomy['kingdom'] = 'Animalia'
-            taxonomy['phylum'] = 'Arthropoda'
-            taxonomy['class'] = 'Insecta'
-            taxonomy['species'] = 'Insects'
-        elif category_id == 5:
-            # Arachnids
-            taxonomy['kingdom'] = 'Animalia'
-            taxonomy['phylum'] = 'Arthropoda'
-            taxonomy['class'] = 'Arachnida'
-            taxonomy['species'] = 'Arachnids'
-        elif category_id == 6:
-            # Plants - Flowering
-            taxonomy['kingdom'] = 'Plantae'
-            taxonomy['phylum'] = 'Tracheophyta'
-            taxonomy['class'] = 'Magnoliopsida'
-            taxonomy['species'] = 'Flowering_plants'
-        elif category_id == 7:
-            # Plants - Conifers
-            taxonomy['kingdom'] = 'Plantae'
-            taxonomy['phylum'] = 'Tracheophyta'
-            taxonomy['class'] = 'Pinopsida'
-            taxonomy['species'] = 'Conifers'
-        elif category_id == 8:
-            # Fungi
-            taxonomy['kingdom'] = 'Fungi'
-            taxonomy['phylum'] = 'Basidiomycota'
-            taxonomy['class'] = 'Agaricomycetes'
-            taxonomy['species'] = 'Mushrooms'
-        else:  # category_id == 9
-            # Marine life
-            taxonomy['kingdom'] = 'Animalia'
-            taxonomy['phylum'] = 'Cnidaria'
-            taxonomy['class'] = 'Anthozoa'
-            taxonomy['species'] = 'Marine_life'
-        
-        # Add common name based on species category
-        taxonomy['common'] = taxonomy['species'].replace('_', ' ').title()
-        
-        return taxonomy
-    
+
     def _get_taxonomic_label_from_dict(self, taxonomy: Dict[str, str]) -> Optional[str]:
-        """Extract taxonomic label at the specified level from taxonomy dict."""
+        """Extract taxonomic label at the specified level from taxonomy dict, skipping confusor/unknown/hybrid labels."""
         level_map = {
             'kingdom': 'kingdom',
             'phylum': 'phylum', 
@@ -346,16 +279,20 @@ class TreeOfLifeAdapter(BaseDatasetAdapter):
         field_name = level_map[self.taxonomic_level]
         label = str(taxonomy.get(field_name, '')).strip()
         
-        # Return None if label is empty or indicates unknown species
-        if not label or label.lower() in ['', 'unknown', 'sp.', 'n/a', 'nan', 'none']:
+        # Return None if label is empty or indicates unknown/confusor/hybrid
+        bad_keywords = [
+            '', 'unknown', 'sp.', 'n/a', 'nan', 'none', 'confusor', 'confusa', 'confusum', 'confus', 'confuso'
+        ]
+        label_lower = label.lower()
+        if label_lower in bad_keywords:
             return None
-        
+        # Also skip if label contains 'sp.' (uncertain species) or ' x ' (hybrid)
+        if 'sp.' in label_lower or ' x ' in label_lower:
+            return None
         # Clean up species labels that have special indicators
         if self.taxonomic_level == 'species' and ('sp.' in label or 'x ' in label):
-            # Handle special cases like "sp. ___" or hybrid indicators
             if 'sp.' in label and 'ex' not in label:
                 return None  # Skip uncertain species
-        
         return label
     
     def _has_full_taxonomy_from_dict(self, taxonomy: Dict[str, str]) -> bool:
@@ -435,57 +372,145 @@ class TreeOfLifeAdapter(BaseDatasetAdapter):
         return DatasetTemplates.get_templates()
     
     def _init_catalog_lazy_reader(self, catalog_path: str):
-        """Initialize lazy reader for catalog.csv using pandas chunking."""
+        """Initialize ultra-lightweight catalog reader using pandas DataFrame for ultra-fast lookup."""
         self.catalog_path = catalog_path
-        self.catalog_cache = {}  # Small LRU cache for frequently accessed entries
-        self.cache_size = 10000  # Keep up to 10K entries in memory
+        self.catalog_cache = {}  # Minimal cache for recently accessed entries
+        self.cache_size = 10000  # Increase cache size for better performance
+
+        # Create a simple text index if it doesn't exist
+        index_path = catalog_path.replace('.csv', '_simple_index.txt')
+        if not os.path.exists(index_path) or os.path.getmtime(index_path) < os.path.getmtime(catalog_path):
+            print("🔧 Creating ultra-lightweight text index...")
+            self._create_simple_index(catalog_path, index_path)
+        else:
+            print("✅ Using existing text index")
+        self.index_path = index_path
+        print(f"✅ Ultra-lightweight catalog reader initialized")
+
+        # Load the catalog into a pandas DataFrame for fast lookups
+        print("🚀 Loading full catalog.csv into pandas DataFrame (this may take 1-2 minutes)...")
+        import pandas as pd
+        self._catalog_df = pd.read_csv(catalog_path, index_col='treeoflife_id', low_memory=False)
+        print(f"✅ Loaded catalog.csv into DataFrame: {self._catalog_df.shape[0]:,} entries.")
+    
+    def _create_simple_index(self, catalog_path: str, index_path: str):
+        """Create minimal index mapping sample_id to line number."""
+        print("📝 Building minimal index (this will take a few minutes but only once)...")
         
-        print(f"✅ Initialized lazy catalog reader for: {catalog_path}")
-        print("📊 Using on-demand pandas chunking for memory efficiency")
+        with open(index_path, 'w') as index_file:
+            with open(catalog_path, 'r', encoding='utf-8') as csv_file:
+                # Skip header and get column positions
+                header_line = csv_file.readline()
+                header = header_line.strip().split(',')
+                
+                # Find treeoflife_id column
+                try:
+                    id_col = header.index('treeoflife_id')
+                except ValueError:
+                    id_col = 1  # Default assumption
+                
+                line_num = 1  # Start from 1 (after header)
+                entries_indexed = 0
+                
+                for line in csv_file:
+                    line_num += 1
+                    try:
+                        # Split line and extract ID (handle quoted fields)
+                        parts = []
+                        current_part = ""
+                        in_quotes = False
+                        
+                        for char in line:
+                            if char == '"':
+                                in_quotes = not in_quotes
+                            elif char == ',' and not in_quotes:
+                                parts.append(current_part.strip('"'))
+                                current_part = ""
+                                continue
+                            current_part += char
+                        
+                        if current_part:
+                            parts.append(current_part.strip('"'))
+                        
+                        if len(parts) > id_col:
+                            sample_id = parts[id_col].strip()
+                            if sample_id and sample_id != 'treeoflife_id':
+                                index_file.write(f"{sample_id}:{line_num}\n")
+                                entries_indexed += 1
+                                
+                                if entries_indexed % 200000 == 0:
+                                    print(f"📊 Indexed {entries_indexed:,} entries...")
+                    
+                    except Exception:
+                        continue  # Skip malformed lines
+                
+                print(f"✅ Index complete: {entries_indexed:,} entries")
     
     def _get_taxonomy_from_catalog(self, sample_id: str) -> Optional[Dict[str, str]]:
-        """Get taxonomy information using lazy pandas reading."""
-        # Check cache first
+        """Ultra-fast taxonomy lookup using pandas DataFrame if available, else fallback to index dict."""
+        # Check tiny cache first
         if sample_id in self.catalog_cache:
             return self.catalog_cache[sample_id]
-        
-        # If not in cache, search through catalog file
-        if not hasattr(self, 'catalog_path') or not os.path.exists(self.catalog_path):
-            return None
-        
-        try:
-            # Read catalog in chunks to find the sample
-            chunk_size = 50000  # Larger chunks for better performance
+        # 优先用 pandas DataFrame 查找
+        if hasattr(self, '_catalog_df'):
+            try:
+                row = self._catalog_df.loc[sample_id]
+                taxonomy = {
+                    'kingdom': str(row.get('kingdom', '')),
+                    'phylum': str(row.get('phylum', '')),
+                    'class': str(row.get('class', '')),
+                    'order': str(row.get('order', '')),
+                    'family': str(row.get('family', '')),
+                    'genus': str(row.get('genus', '')),
+                    'species': str(row.get('species', '')),
+                    'common': str(row.get('common', '')),
+                    'split': str(row.get('split', 'train'))
+                }
+                # Add to cache
+                if len(self.catalog_cache) >= self.cache_size:
+                    keys_to_remove = list(self.catalog_cache.keys())[:self.cache_size//2]
+                    for key in keys_to_remove:
+                        del self.catalog_cache[key]
+                self.catalog_cache[sample_id] = taxonomy
+                return taxonomy
+            except KeyError:
+                return None
             
-            for chunk in pd.read_csv(self.catalog_path, chunksize=chunk_size, low_memory=False):
-                # Look for our sample_id in this chunk
-                matching_rows = chunk[chunk['treeoflife_id'] == sample_id]
-                
-                if not matching_rows.empty:
-                    # Found it! Extract the row
-                    row = matching_rows.iloc[0]
-                    
-                    taxonomy = {
-                        'kingdom': str(row.get('kingdom', '')),
-                        'phylum': str(row.get('phylum', '')),
-                        'class': str(row.get('class', '')),
-                        'order': str(row.get('order', '')),
-                        'family': str(row.get('family', '')),
-                        'genus': str(row.get('genus', '')),
-                        'species': str(row.get('species', '')),
-                        'common': str(row.get('common', '')),
-                        'split': str(row.get('split', 'train'))
-                    }
-                    
-                    # Add to cache (with simple size limit)
-                    if len(self.catalog_cache) < self.cache_size:
-                        self.catalog_cache[sample_id] = taxonomy
-                    
-                    return taxonomy
-            
-            # Not found in any chunk
-            return None
-            
-        except Exception as e:
-            print(f"⚠️  Lazy catalog lookup error for {sample_id}: {e}")
-            return None
+        # If DataFrame not available, use ultra-lightweight text index
+        if hasattr(self, '_catalog_index_dict') and hasattr(self, '_parse_catalog_line'):
+            target_line = self._catalog_index_dict.get(sample_id)
+            if target_line is None:
+                return None
+            try:
+                with open(self.catalog_path, 'r', encoding='utf-8') as csv_file:
+                    for current_line_num, line in enumerate(csv_file, 1):
+                        if current_line_num == target_line:
+                            taxonomy = TreeOfLifeAdapter._parse_catalog_line(self, line)
+                            if len(self.catalog_cache) >= self.cache_size:
+                                keys_to_remove = list(self.catalog_cache.keys())[:self.cache_size//2]
+                                for key in keys_to_remove:
+                                    del self.catalog_cache[key]
+                            self.catalog_cache[sample_id] = taxonomy
+                            return taxonomy
+                return None
+            except Exception as e:
+                print(f"⚠️  Fast lookup error for {sample_id}: {e}")
+                return None
+        return None
+    
+    def _parse_catalog_row(self, row: pd.Series) -> Dict[str, str]:
+        """Parse a pandas Series row to extract taxonomy fields."""
+        # Map to taxonomy fields (adjust indices based on catalog structure)
+        # Typical order: split,treeoflife_id,eol_content_id,eol_page_id,bioscan_part,bioscan_filename,
+        #                inat21_filename,inat21_cls_name,inat21_cls_num,kingdom,phylum,class,order,family,genus,species,common
+        return {
+            'kingdom': row['kingdom'] if 'kingdom' in row else '',
+            'phylum': row['phylum'] if 'phylum' in row else '',
+            'class': row['class'] if 'class' in row else '',
+            'order': row['order'] if 'order' in row else '',
+            'family': row['family'] if 'family' in row else '',
+            'genus': row['genus'] if 'genus' in row else '',
+            'species': row['species'] if 'species' in row else '',
+            'common': row['common'] if 'common' in row else '',
+            'split': row['split'] if 'split' in row else 'train'
+        }

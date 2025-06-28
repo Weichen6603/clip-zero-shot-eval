@@ -63,6 +63,38 @@ class VisualGenomeAdapter(BaseDatasetAdapter):
         
         super().__init__(root_path, transform=transform, split="train", **filtered_kwargs)
 
+    def _clean_synset_label(self, synset: str) -> str:
+        """
+        Clean synset labels by removing WordNet suffixes to make them CLIP-friendly.
+        
+        Examples:
+        - 'accent.n.01' -> 'accent'
+        - 'air_conditioner.n.01' -> 'air conditioner'
+        - 'adult.n.01' -> 'adult'
+        
+        Args:
+            synset: Original synset string (e.g., 'accent.n.01')
+            
+        Returns:
+            Cleaned label string (e.g., 'accent')
+        """
+        if not synset or not isinstance(synset, str):
+            return synset
+        
+        # Remove WordNet suffixes like .n.01, .v.02, .a.01, .r.01
+        # These suffixes indicate part of speech (n=noun, v=verb, a=adjective, r=adverb) and sense number
+        parts = synset.split('.')
+        if len(parts) >= 3:
+            # Take only the word part before the first dot
+            cleaned = parts[0]
+        else:
+            cleaned = synset
+        
+        # Replace underscores with spaces for better readability
+        cleaned = cleaned.replace('_', ' ')
+        
+        return cleaned.strip()
+
     def _load_data(self, **kwargs):
         """Load Visual Genome data with true lazy loading - only indices and essential metadata."""
         try:
@@ -150,7 +182,7 @@ class VisualGenomeAdapter(BaseDatasetAdapter):
         
         for scan_idx, actual_idx in enumerate(scan_indices):
             try:
-                if self.max_samples and len(valid_indices) >= self.max_samples:
+                if self.max_samples is not None and len(valid_indices) >= self.max_samples:
                     break
                 
                 # Try to access the sample safely
@@ -249,7 +281,9 @@ class VisualGenomeAdapter(BaseDatasetAdapter):
                         synsets = obj.get("synsets", []) if isinstance(obj, dict) else getattr(obj, 'synsets', [])
                         for synset in synsets[:2]:  # Limit synsets per object
                             if synset and isinstance(synset, str):
-                                all_labels.add(synset.strip())
+                                # Clean synset label to remove WordNet suffixes
+                                cleaned_label = self._clean_synset_label(synset.strip())
+                                all_labels.add(cleaned_label)
                     else:
                         names = obj.get("names", []) if isinstance(obj, dict) else getattr(obj, 'names', [])
                         for name in names[:2]:  # Limit names per object
@@ -350,7 +384,8 @@ class VisualGenomeAdapter(BaseDatasetAdapter):
                 if self.use_synsets:
                     synsets = obj.get("synsets", []) if isinstance(obj, dict) else getattr(obj, 'synsets', [])
                     if synsets and synsets[0]:
-                        primary_label = synsets[0].strip()
+                        # Clean synset label to remove WordNet suffixes
+                        primary_label = self._clean_synset_label(synsets[0].strip())
                 else:
                     names = obj.get("names", []) if isinstance(obj, dict) else getattr(obj, 'names', [])
                     if names and names[0]:

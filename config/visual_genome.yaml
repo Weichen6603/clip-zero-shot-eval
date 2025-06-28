@@ -28,7 +28,7 @@ datasets:
     # max_samples: null      # Use all available samples (~108K images) - remove to enable
     min_objects: 1           # Include images with at least 1 object
     max_objects: null        # No limit on object complexity
-    use_synsets: false       # Use original object names for better interpretability
+    use_synsets: true        # Use WordNet synsets for better semantic quality
     
     # For testing or limited resources, uncomment these lines:
     # max_samples: 10000     # Limit to 10K samples for faster evaluation

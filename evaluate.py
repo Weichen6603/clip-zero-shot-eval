@@ -140,7 +140,9 @@ def main():
     results = evaluator.evaluate_multiple_datasets(
         datasets,
         batch_size=config.batch_size,
-        save_dir=config.output_dir if config.save_results else None
+        save_dir=config.output_dir if config.save_results else None,
+        save_individual=True,  # Save each dataset to its own directory
+        config=config  # Pass config for saving with individual results
     )
 
     # Print final summary
@@ -154,9 +156,9 @@ def main():
 
     for name, result in results.items():
         if 'error' not in result:
-            acc = result['accuracy'] * 100
-            top5 = result['top5_accuracy'] * 100
-            print(f"{name:<30} {acc:<10.2f}% {top5:<10.2f}%")
+            acc = result['accuracy']
+            top5 = result['top5_accuracy']
+            print(f"{name:<30} {acc:<10.2%} {top5:<10.2%}")
         else:
             print(f"{name:<30} ERROR")
 

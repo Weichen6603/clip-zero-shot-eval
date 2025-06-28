@@ -8,7 +8,7 @@ use_ensemble: true  # Whether to use multiple templates for text encoding
 
 # Evaluation settings
 batch_size: 32  # Optimized batch size for memory efficiency
-num_workers: 6  # More workers for full dataset processing
+num_workers: 8
 save_predictions: false  # Save individual predictions (large files for this dataset)
 
 # Output settings
