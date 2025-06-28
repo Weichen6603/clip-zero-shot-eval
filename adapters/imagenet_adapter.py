@@ -108,7 +108,7 @@ class ImageNetAdapter(BaseDatasetAdapter):
             except:
                 pass  # Use max_samples as total
         
-        for idx, sample in enumerate(tqdm(self.dataset, total=total, desc="Processing samples")):
+        for idx, sample in tqdm(self.dataset, total=total, desc="Processing samples", dynamic_ncols=True, leave=True):
             if self.max_samples is not None and idx >= self.max_samples:
                 break
             
