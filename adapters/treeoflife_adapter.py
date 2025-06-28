@@ -36,7 +36,7 @@ class TreeOfLifeAdapter(BaseDatasetAdapter):
                  max_samples: Optional[int] = None, taxonomic_level: str = "species",
                  use_common_names: bool = True, min_images_per_class: int = 1,
                  exclude_partial_labels: bool = False, use_precomputed_embeddings: bool = False,
-                 max_shards: Optional[int] = None, **kwargs):
+                 max_shards: Optional[int] = None, streaming: bool = True, **kwargs):
         """
         Initialize TreeOfLife-10M adapter.
         
@@ -61,6 +61,11 @@ class TreeOfLifeAdapter(BaseDatasetAdapter):
         self.use_precomputed_embeddings = use_precomputed_embeddings
         self.max_shards = max_shards
         self.catalog_db_path = None  # Will hold SQLite database path
+        # streaming config: explicit arg > kwargs > default True
+        if 'streaming' in kwargs:
+            self.streaming = kwargs['streaming']
+        else:
+            self.streaming = streaming
         
         # Validate taxonomic level
         valid_levels = ['species', 'genus', 'family', 'order', 'class', 'phylum', 'kingdom']
@@ -114,7 +119,7 @@ class TreeOfLifeAdapter(BaseDatasetAdapter):
         dataset = load_dataset(
             dataset_name, 
             split="train",
-            streaming=True,
+            streaming=self.streaming,
             cache_dir=self.root_path
         )
         
