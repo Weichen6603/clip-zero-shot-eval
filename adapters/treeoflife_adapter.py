@@ -6,11 +6,14 @@ import time
 import random
 import sqlite3
 import warnings
+import io
+import traceback
 from typing import List, Dict, Any, Optional, Tuple
 from collections import defaultdict, Counter
 from PIL import Image
 import torch
 import pandas as pd
+import torchvision.transforms as transforms
 
 # Configure PIL to handle large images and suppress warnings
 Image.MAX_IMAGE_PIXELS = None  # Remove size limit
@@ -268,14 +271,30 @@ class TreeOfLifeAdapter(BaseDatasetAdapter):
                 })
                 return None
             
-            # Basic image validation (don't fully process, just check availability)
+            # Process and store only compressed image bytes for true streaming
+            image_bytes = None
             try:
                 if not isinstance(image, Image.Image):
                     # Try to convert to PIL Image if it's bytes or other format
                     if hasattr(image, 'read'):
-                        import io
-                        image_data = image.read()
-                        test_image = Image.open(io.BytesIO(image_data))
+                        image_bytes = image.read()
+                        # Validate that we can decode it
+                        test_image = Image.open(io.BytesIO(image_bytes))
+                        _ = test_image.size  # Quick validation
+                        
+                        # Skip extremely large images that might cause memory issues
+                        width, height = test_image.size
+                        if width * height > 100_000_000:  # 100MP limit for initial filtering
+                            failed_images.append({
+                                'sample_id': sample_id,
+                                'reason': f'Image too large: {width}x{height} pixels',
+                                'url': sample_url
+                            })
+                            if idx < 10:
+                                print(f"⚠️  Skipping very large image {sample_id}: {width}x{height} pixels")
+                            return None
+                        
+                        del test_image  # Immediately release validation image
                     else:
                         failed_images.append({
                             'sample_id': sample_id,
@@ -284,26 +303,26 @@ class TreeOfLifeAdapter(BaseDatasetAdapter):
                         })
                         return None
                 else:
-                    test_image = image
+                    # Convert PIL Image to compressed bytes for storage
+                    width, height = image.size
+                    if width * height > 100_000_000:  # 100MP limit
+                        failed_images.append({
+                            'sample_id': sample_id,
+                            'reason': f'Image too large: {width}x{height} pixels',
+                            'url': sample_url
+                        })
+                        if idx < 10:
+                            print(f"⚠️  Skipping very large image {sample_id}: {width}x{height} pixels")
+                        return None
+                    
+                    bytes_io = io.BytesIO()
+                    # Store as JPEG with good quality but compressed
+                    image.save(bytes_io, format='JPEG', quality=85, optimize=True)
+                    image_bytes = bytes_io.getvalue()
+                    del bytes_io
                 
-                # Quick validation - just check we can access basic properties
-                _ = test_image.size
-                _ = test_image.mode
-                
-                # Skip extremely large images that might cause memory issues
-                width, height = test_image.size
-                if width * height > 100_000_000:  # 100MP limit for initial filtering
-                    failed_images.append({
-                        'sample_id': sample_id,
-                        'reason': f'Image too large: {width}x{height} pixels',
-                        'url': sample_url
-                    })
-                    if idx < 10:
-                        print(f"⚠️  Skipping very large image {sample_id}: {width}x{height} pixels")
-                    return None
-                
-                # Don't keep the test_image in memory - let it be garbage collected
-                del test_image
+                # Immediately release the original image from memory
+                del image
                 
             except Exception as img_error:
                 error_type = type(img_error).__name__
@@ -314,7 +333,7 @@ class TreeOfLifeAdapter(BaseDatasetAdapter):
                     'url': sample_url
                 })
                 if idx < 5:  # Show details for first few image errors
-                    print(f"⚠️  Image validation error for {sample_id}: {error_type} - {error_msg}")
+                    print(f"⚠️  Image processing error for {sample_id}: {error_type} - {error_msg}")
                 return None
             
             # Try to get real taxonomy from catalog database
@@ -342,11 +361,11 @@ class TreeOfLifeAdapter(BaseDatasetAdapter):
                 'scientific_name': taxonomy.get('species', ''),
                 'treeoflife_id': sample_id,
                 'metadata': taxonomy,
-                # For streaming: store image access info instead of image itself
+                # For true streaming: store only compressed image bytes
                 'image_source': {
-                    'type': 'hf_sample',
-                    'sample_data': sample,  # Keep minimal reference to original sample
-                    'processed': False  # Track if we've processed this image before
+                    'type': 'compressed_bytes',
+                    'image_bytes': image_bytes,  # Compressed JPEG bytes
+                    'sample_id': sample_id,  # For debugging
                 }
             }
             
@@ -500,25 +519,21 @@ class TreeOfLifeAdapter(BaseDatasetAdapter):
             except Exception as e:
                 print(f"⚠️ Error applying transform at index {index} ({sample_info.get('treeoflife_id', 'unknown')}): {e}")
                 # Fallback to basic tensor conversion
-                import torchvision.transforms as transforms
                 to_tensor = transforms.ToTensor()
                 try:
                     image = to_tensor(image)
                 except Exception as e2:
                     print(f"⚠️ Error in fallback tensor conversion: {e2}")
                     # Create a placeholder tensor
-                    import torch
                     image = torch.zeros(3, 224, 224)
         else:
             # Convert PIL image to tensor if no transform is provided
-            import torchvision.transforms as transforms
             to_tensor = transforms.ToTensor()
             try:
                 image = to_tensor(image)
             except Exception as e:
                 print(f"⚠️ Error converting to tensor at index {index} ({sample_info.get('treeoflife_id', 'unknown')}): {e}")
                 # Create a placeholder tensor
-                import torch
                 image = torch.zeros(3, 224, 224)
         
         # Get label
@@ -528,28 +543,18 @@ class TreeOfLifeAdapter(BaseDatasetAdapter):
         return image, label
     
     def _load_image_on_demand(self, sample_info: Dict[str, Any]) -> Optional[Image.Image]:
-        """Load image on-demand for true streaming behavior."""
+        """Load image on-demand from compressed bytes for true streaming behavior."""
         try:
             image_source = sample_info.get('image_source', {})
-            if image_source.get('type') == 'hf_sample':
-                # Extract image from original HuggingFace sample
-                sample_data = image_source.get('sample_data', {})
-                image = sample_data.get('jpg')
+            if image_source.get('type') == 'compressed_bytes':
+                # Extract compressed image bytes
+                image_bytes = image_source.get('image_bytes')
                 
-                if image is None:
+                if image_bytes is None:
                     return None
                 
-                # Validate and process image
-                if not isinstance(image, Image.Image):
-                    try:
-                        if hasattr(image, 'read'):
-                            import io
-                            image_data = image.read()
-                            image = Image.open(io.BytesIO(image_data))
-                        else:
-                            return None
-                    except Exception:
-                        return None
+                # Decode from compressed bytes - this is when image actually enters memory
+                image = Image.open(io.BytesIO(image_bytes))
                 
                 # Basic integrity checks
                 try:
@@ -563,10 +568,10 @@ class TreeOfLifeAdapter(BaseDatasetAdapter):
                 except Exception:
                     return None
                 
-                # Resize very large images
+                # Resize very large images if needed
                 try:
                     width, height = image.size
-                    if width * height > 50_000_000:  # 50MP limit
+                    if width * height > 50_000_000:  # 50MP limit for runtime
                         max_size = 2048
                         if width > max_size or height > max_size:
                             ratio = min(max_size / width, max_size / height)
