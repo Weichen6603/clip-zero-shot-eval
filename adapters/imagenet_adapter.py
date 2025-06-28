@@ -71,6 +71,11 @@ class ImageNetAdapter(BaseDatasetAdapter):
             print(f"Successfully loaded dataset")
             print(f"Dataset info: {self.dataset}")
             print(f"Dataset type: {type(self.dataset)}")
+            
+            # Debug: Check if dataset is actually loaded correctly
+            if isinstance(self.dataset, str):
+                raise ValueError(f"Dataset loading returned a string instead of dataset object: {self.dataset}")
+            
             # Only print features if dataset is not a dict (i.e., is a Dataset or IterableDataset)
             if not isinstance(self.dataset, dict):
                 if hasattr(self.dataset, 'features'):
@@ -96,8 +101,19 @@ class ImageNetAdapter(BaseDatasetAdapter):
             print("tqdm not installed. Install it with: pip install tqdm")
             tqdm = lambda x, **kwargs: x  # fallback: no progress bar
         
-        total = self.max_samples if self.max_samples is not None else None
-        # Only try to get length for non-streaming datasets that support it
+        # Set total for progress bar - use known ImageNet validation size or max_samples
+        if self.max_samples is not None:
+            total = self.max_samples
+        elif self.split == 'validation' and self.streaming:
+            # ImageNet validation split has exactly 50,000 images
+            total = 50000
+        elif self.split == 'train' and self.streaming:
+            # ImageNet train split has approximately 1,281,167 images
+            total = 1281167
+        else:
+            total = None
+            
+        # Only try to get exact length for non-streaming datasets that support it
         if not self.streaming:
             try:
                 # Import Dataset type to check instance type
@@ -106,11 +122,31 @@ class ImageNetAdapter(BaseDatasetAdapter):
                     dataset_len = len(self.dataset)
                     total = min(dataset_len, self.max_samples or dataset_len)
             except:
-                pass  # Use max_samples as total
+                pass  # Use estimated total
         
-        for idx, sample in tqdm(self.dataset, total=total, desc="Processing samples", dynamic_ncols=True, leave=True):
+        # Use progress bar with estimated total to show ETA
+        progress_bar = tqdm(
+            self.dataset, 
+            total=total, 
+            desc="Processing samples", 
+            dynamic_ncols=True, 
+            leave=True,
+            unit="samples",
+            unit_scale=True
+        )
+        
+        for idx, sample in enumerate(progress_bar):
             if self.max_samples is not None and idx >= self.max_samples:
                 break
+            
+            # Update progress description with current count
+            if idx % 100 == 0:  # Update every 100 samples to avoid too frequent updates
+                progress_bar.set_description(f"Processing samples ({idx+1})")
+            
+            # Ensure sample is a dictionary
+            if not isinstance(sample, dict):
+                print(f"Warning: Sample {idx} is not a dictionary: {type(sample)}")
+                continue
             
             # Get synset string using int2str method
             synset = None
