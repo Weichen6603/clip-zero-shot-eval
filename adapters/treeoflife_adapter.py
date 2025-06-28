@@ -127,6 +127,10 @@ class TreeOfLifeAdapter(BaseDatasetAdapter):
         print(f"⏱️  Starting data processing...")
         
         # Convert streaming dataset to samples
+        samples = []
+        processed_count = 0
+        start_time = time.time()  # Initialize start_time for both modes
+        
         if self.streaming:
             # Streaming mode: Only create metadata for lazy loading (即用即扔)
             print("🔍 Streaming mode: Creating lightweight metadata...")
@@ -166,29 +170,11 @@ class TreeOfLifeAdapter(BaseDatasetAdapter):
                     progress_bar.update(1)
                 
                 try:
-                    # Quick validation - only check if sample has required fields
-                    sample_id = sample.get('__key__', f'sample_{idx}')
-                    if sample.get('jpg') is None:
-                        continue
-                    
-                    # Quick taxonomy check without full processing
-                    taxonomy = self._get_taxonomy_from_catalog(sample_id)
-                    if not taxonomy:
-                        continue
-                    
-                    taxonomic_label = self._get_taxonomic_label_from_dict(taxonomy)
-                    if not taxonomic_label:
-                        continue
-                    
-                    # Store minimal metadata for lazy loading
-                    samples.append({
-                        'image_path': idx,  # Index for lazy loading
-                        'label': taxonomic_label,
-                        'sample_id': sample_id,
-                        # No image data stored (即用即扔)
-                    })
-                    
-                    processed_count += 1
+                    # Use the unified processing method in streaming mode
+                    sample_info = self._process_hf_sample(sample, idx, streaming_mode=True)
+                    if sample_info:
+                        samples.append(sample_info)
+                        processed_count += 1
                     
                 except Exception as e:
                     continue
@@ -255,7 +241,9 @@ class TreeOfLifeAdapter(BaseDatasetAdapter):
             
             # Extract sample information
             try:
-                sample_info = self._process_hf_sample(sample, idx)
+                # Determine streaming mode and call with appropriate parameter
+                is_streaming = hasattr(self, '_dataset_for_streaming') and self._dataset_for_streaming is not None
+                sample_info = self._process_hf_sample(sample, idx, streaming_mode=is_streaming)
                 if sample_info:
                     samples.append(sample_info)
                     
@@ -281,20 +269,35 @@ class TreeOfLifeAdapter(BaseDatasetAdapter):
             print("⚠️ No valid samples found, this might indicate data format issues")
             raise ValueError("No valid samples extracted from TreeOfLife-10M dataset")
         
-        elapsed_time = time.time() - start_time
-        print(f"✅ Loaded {len(samples)} valid samples from TreeOfLife-10M in {elapsed_time:.1f}s")
+        # Calculate elapsed time only for non-streaming mode
+        if not self.streaming:
+            elapsed_time = time.time() - start_time
+            print(f"✅ Loaded {len(samples)} valid samples from TreeOfLife-10M in {elapsed_time:.1f}s")
+        else:
+            print(f"✅ Created metadata for {len(samples)} samples in streaming mode")
+            
         return self._filter_samples_by_class_count(samples)
             
-    def _process_hf_sample(self, sample: Dict[str, Any], idx: int) -> Optional[Dict[str, Any]]:
-        """Process a single sample from HuggingFace dataset."""
+    def _process_hf_sample(self, sample: Dict[str, Any], idx: int, streaming_mode: bool = False) -> Optional[Dict[str, Any]]:
+        """Process a single sample from HuggingFace dataset with streaming support."""
         try:
-            # Extract image from TreeOfLife-10M format
-            image = sample.get('jpg')  # TreeOfLife-10M uses 'jpg' field for images
-            if image is None:
-                return None
-            
-            # Extract sample ID
+            # Extract sample ID first for taxonomy lookup
             sample_id = sample.get('__key__', f'sample_{idx}')
+            
+            # Initialize image variable
+            image = None
+            
+            # For streaming mode, only validate that image exists, don't load it
+            if streaming_mode:
+                if sample.get('jpg') is None:
+                    return None
+                # Don't actually load the image in streaming mode
+            else:
+                # Non-streaming mode: get image reference
+                image = sample.get('jpg')  # TreeOfLife-10M uses 'jpg' field for images
+                if image is None:
+                    return None
+            
             sample_url = sample.get('__url__', '')
             
             # Try to get real taxonomy from catalog database
@@ -316,21 +319,35 @@ class TreeOfLifeAdapter(BaseDatasetAdapter):
             taxonomic_label = self._get_taxonomic_label_from_dict(taxonomy)
             if not taxonomic_label:
                 return None
-    
             
             # Skip if excluding partial labels and sample doesn't have full taxonomy
             if self.exclude_partial_labels and not self._has_full_taxonomy_from_dict(taxonomy):
                 return None
-                
-            sample_info = {
-                'index': idx,
-                'taxonomic_label': taxonomic_label,
-                'common_name': taxonomy.get('common', ''),
-                'scientific_name': taxonomy.get('species', ''),
-                'image': image,
-                'treeoflife_id': sample_id,
-                'metadata': taxonomy
-            }
+            
+            if streaming_mode:
+                # Streaming mode: Don't store image data (即用即扔)
+                sample_info = {
+                    'index': idx,
+                    'label': taxonomic_label,  # Use 'label' for consistency
+                    'taxonomic_label': taxonomic_label,  # Keep for backward compatibility
+                    'common_name': taxonomy.get('common', ''),
+                    'scientific_name': taxonomy.get('species', ''),
+                    'treeoflife_id': sample_id,
+                    'metadata': taxonomy
+                    # No 'image' field - will be loaded on-demand
+                }
+            else:
+                # Non-streaming mode: Include image data (image was defined above)
+                sample_info = {
+                    'index': idx,
+                    'label': taxonomic_label,  # Use 'label' for consistency
+                    'taxonomic_label': taxonomic_label,  # Keep for backward compatibility
+                    'common_name': taxonomy.get('common', ''),
+                    'scientific_name': taxonomy.get('species', ''),
+                    'image': image,  # image is defined in non-streaming mode
+                    'treeoflife_id': sample_id,
+                    'metadata': taxonomy
+                }
             
             return sample_info
             
