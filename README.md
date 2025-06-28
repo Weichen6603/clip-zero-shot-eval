@@ -22,8 +22,17 @@ A flexible framework for evaluating CLIP models on zero-shot classification task
 
 ## Installation
 
+You can install all dependencies with pip:
+
 ```bash
 pip install -r requirements.txt
+```
+
+Or use the provided Conda environment (recommended for reproducibility):
+
+```bash
+conda env create -f env.yml
+conda activate clip
 ```
 
 ### Additional Setup for ImageNet-1K
