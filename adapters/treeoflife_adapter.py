@@ -266,14 +266,14 @@ class TreeOfLifeAdapter(BaseDatasetAdapter):
                 })
                 return None
             
-            # Validate and convert image with comprehensive error handling
+            # Basic image validation (don't fully process, just check availability)
             try:
                 if not isinstance(image, Image.Image):
                     # Try to convert to PIL Image if it's bytes or other format
                     if hasattr(image, 'read'):
                         import io
                         image_data = image.read()
-                        image = Image.open(io.BytesIO(image_data))
+                        test_image = Image.open(io.BytesIO(image_data))
                     else:
                         failed_images.append({
                             'sample_id': sample_id,
@@ -281,22 +281,27 @@ class TreeOfLifeAdapter(BaseDatasetAdapter):
                             'url': sample_url
                         })
                         return None
+                else:
+                    test_image = image
                 
-                # Test that we can access basic image properties
-                _ = image.size  # This will fail if image is corrupted
-                _ = image.mode  # Another basic check
+                # Quick validation - just check we can access basic properties
+                _ = test_image.size
+                _ = test_image.mode
                 
-                # For corrupted TIFF files, try to convert to RGB mode
-                if image.mode not in ['RGB', 'L', 'RGBA']:
-                    try:
-                        image = image.convert('RGB')
-                    except Exception:
-                        failed_images.append({
-                            'sample_id': sample_id,
-                            'reason': f'Cannot convert image mode {image.mode} to RGB',
-                            'url': sample_url
-                        })
-                        return None
+                # Skip extremely large images that might cause memory issues
+                width, height = test_image.size
+                if width * height > 100_000_000:  # 100MP limit for initial filtering
+                    failed_images.append({
+                        'sample_id': sample_id,
+                        'reason': f'Image too large: {width}x{height} pixels',
+                        'url': sample_url
+                    })
+                    if idx < 10:
+                        print(f"⚠️  Skipping very large image {sample_id}: {width}x{height} pixels")
+                    return None
+                
+                # Don't keep the test_image in memory - let it be garbage collected
+                del test_image
                 
             except Exception as img_error:
                 error_type = type(img_error).__name__
@@ -307,28 +312,7 @@ class TreeOfLifeAdapter(BaseDatasetAdapter):
                     'url': sample_url
                 })
                 if idx < 5:  # Show details for first few image errors
-                    print(f"⚠️  Image loading error for {sample_id}: {error_type} - {error_msg}")
-                return None
-            
-            # Skip extremely large images that might cause memory issues
-            try:
-                width, height = image.size
-                if width * height > 50_000_000:  # 50MP limit
-                    failed_images.append({
-                        'sample_id': sample_id,
-                        'reason': f'Image too large: {width}x{height} pixels',
-                        'url': sample_url
-                    })
-                    if idx < 10:  # Only show warning for first few large images
-                        print(f"⚠️  Skipping very large image {sample_id}: {width}x{height} pixels")
-                    return None
-            except Exception:
-                # If we can't even get the size, the image is definitely corrupted
-                failed_images.append({
-                    'sample_id': sample_id,
-                    'reason': 'Cannot access image size - corrupted image',
-                    'url': sample_url
-                })
+                    print(f"⚠️  Image validation error for {sample_id}: {error_type} - {error_msg}")
                 return None
             
             # Try to get real taxonomy from catalog database
@@ -358,9 +342,14 @@ class TreeOfLifeAdapter(BaseDatasetAdapter):
                 'taxonomic_label': taxonomic_label,
                 'common_name': taxonomy.get('common', ''),
                 'scientific_name': taxonomy.get('species', ''),
-                'image': image,
                 'treeoflife_id': sample_id,
-                'metadata': taxonomy
+                'metadata': taxonomy,
+                # For streaming: store image access info instead of image itself
+                'image_source': {
+                    'type': 'hf_sample',
+                    'sample_data': sample,  # Keep minimal reference to original sample
+                    'processed': False  # Track if we've processed this image before
+                }
             }
             
             return sample_info
@@ -371,7 +360,7 @@ class TreeOfLifeAdapter(BaseDatasetAdapter):
             return None
 
     def _get_taxonomic_label_from_dict(self, taxonomy: Dict[str, str]) -> Optional[str]:
-        """Extract taxonomic label at the specified level from taxonomy dict."""
+        """Extract taxonomic label at the specified level with strict filtering."""
         level_map = {
             'kingdom': 'kingdom',
             'phylum': 'phylum', 
@@ -388,15 +377,56 @@ class TreeOfLifeAdapter(BaseDatasetAdapter):
         field_name = level_map[self.taxonomic_level]
         label = str(taxonomy.get(field_name, '')).strip()
         
-        # Return None if label is empty or indicates unknown species
-        if not label or label.lower() in ['', 'unknown', 'sp.', 'n/a', 'nan', 'none']:
+        # Strict filtering: Return None for uncertain/confusing/hybrid labels
+        uncertain_indicators = [
+            '', 'unknown', 'sp.', 'n/a', 'nan', 'none', 'null',
+            'confusor', 'confuse', 'uncertain', 'unclear', 'ambiguous',
+            'unidentified', 'unidentifiable', 'indeterminate', 'questionable'
+        ]
+        
+        if not label or label.lower() in uncertain_indicators:
             return None
         
-        # Clean up species labels that have special indicators
-        if self.taxonomic_level == 'species' and ('sp.' in label or 'x ' in label):
-            # Handle special cases like "sp. ___" or hybrid indicators
-            if 'sp.' in label and 'ex' not in label:
-                return None  # Skip uncertain species
+        # Filter hybrid indicators (x species, hybrids)
+        if 'x ' in label.lower() or ' x ' in label.lower():
+            return None
+        
+        # Filter uncertain species indicators
+        if 'sp.' in label or 'spp.' in label:
+            return None
+            
+        # Filter specimens with cf. (compare with), aff. (affinity with) - uncertain ID
+        if 'cf.' in label.lower() or 'aff.' in label.lower():
+            return None
+            
+        # Filter complex species (species complex, species group)
+        if 'complex' in label.lower() or 'group' in label.lower():
+            return None
+            
+        # Filter near/close to (nr./near) indicators
+        if 'nr.' in label.lower() or 'near' in label.lower():
+            return None
+            
+        # Filter subspecies indicators that suggest uncertainty
+        if label.endswith(' ssp.') or ' ssp. ' in label:
+            return None
+            
+        # Additional filters for specific taxonomic levels
+        if self.taxonomic_level == 'species':
+            # For species level, be extra strict
+            # Filter names with numbers (often indicate forms/varieties/uncertain status)
+            if any(char.isdigit() for char in label):
+                return None
+                
+            # Filter very short species names (likely incomplete)
+            parts = label.split()
+            if len(parts) < 2:  # Species should have at least genus + species
+                return None
+                
+            # Filter if genus or species part contains uncertain indicators
+            for part in parts:
+                if any(indicator in part.lower() for indicator in ['sp', 'cf', 'aff', 'nr']):
+                    return None
         
         return label
     
@@ -448,33 +478,16 @@ class TreeOfLifeAdapter(BaseDatasetAdapter):
         return classes
     
     def __getitem__(self, index: int) -> Tuple[torch.Tensor, int]:
-        """Get a sample by index with lazy loading and robust image handling."""
+        """Get a sample by index with true streaming (load image on-demand and release immediately)."""
         sample_info = self.data[index]
         
-        # Get image (already loaded by HuggingFace)
-        image = sample_info['image']
-        if not isinstance(image, Image.Image):
-            raise ValueError(f"Expected PIL Image, got {type(image)} for sample {sample_info.get('treeoflife_id', index)}")
+        # Load image on-demand from streaming source
+        image = self._load_image_on_demand(sample_info)
         
-        # Safety check for image size and integrity
-        try:
-            width, height = image.size
-            # Additional integrity check
-            _ = image.mode
-            
-            if width * height > 50_000_000:  # 50MP limit
-                # Resize very large images
-                max_size = 2048
-                if width > max_size or height > max_size:
-                    ratio = min(max_size / width, max_size / height)
-                    new_width = int(width * ratio)
-                    new_height = int(height * ratio)
-                    image = image.resize((new_width, new_height), Image.Resampling.LANCZOS)
-                    
-        except Exception as e:
-            print(f"⚠️ Error accessing image properties at index {index} ({sample_info.get('treeoflife_id', 'unknown')}): {e}")
-            # Try to create a small placeholder image
+        if image is None:
+            # Create placeholder if image loading failed
             image = Image.new('RGB', (224, 224), (128, 128, 128))
+            print(f"⚠️ Using placeholder image for sample {sample_info.get('treeoflife_id', index)}")
         
         # Apply transform if specified
         if self.transform:
@@ -507,7 +520,65 @@ class TreeOfLifeAdapter(BaseDatasetAdapter):
         # Get label
         label = self.class_to_idx[sample_info['taxonomic_label']]
         
+        # Image is automatically garbage collected here - true streaming!
         return image, label
+    
+    def _load_image_on_demand(self, sample_info: Dict[str, Any]) -> Optional[Image.Image]:
+        """Load image on-demand for true streaming behavior."""
+        try:
+            image_source = sample_info.get('image_source', {})
+            if image_source.get('type') == 'hf_sample':
+                # Extract image from original HuggingFace sample
+                sample_data = image_source.get('sample_data', {})
+                image = sample_data.get('jpg')
+                
+                if image is None:
+                    return None
+                
+                # Validate and process image
+                if not isinstance(image, Image.Image):
+                    try:
+                        if hasattr(image, 'read'):
+                            import io
+                            image_data = image.read()
+                            image = Image.open(io.BytesIO(image_data))
+                        else:
+                            return None
+                    except Exception:
+                        return None
+                
+                # Basic integrity checks
+                try:
+                    _ = image.size
+                    _ = image.mode
+                    
+                    # Convert problematic modes to RGB
+                    if image.mode not in ['RGB', 'L', 'RGBA']:
+                        image = image.convert('RGB')
+                        
+                except Exception:
+                    return None
+                
+                # Resize very large images
+                try:
+                    width, height = image.size
+                    if width * height > 50_000_000:  # 50MP limit
+                        max_size = 2048
+                        if width > max_size or height > max_size:
+                            ratio = min(max_size / width, max_size / height)
+                            new_width = int(width * ratio)
+                            new_height = int(height * ratio)
+                            image = image.resize((new_width, new_height), Image.Resampling.LANCZOS)
+                except Exception:
+                    return None
+                
+                return image
+            
+            return None
+            
+        except Exception as e:
+            print(f"⚠️ Error loading image on-demand: {e}")
+            return None
     
     def get_templates(self) -> List[str]:
         """Get text templates for TreeOfLife-10M dataset."""

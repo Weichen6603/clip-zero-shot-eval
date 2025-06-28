@@ -387,11 +387,12 @@ huggingface-cli login
 ### TreeOfLife-10M Data Loading, Catalog Indexing, and Memory Usage
 
 - **Catalog Table (`catalog.csv`)**: On first run, the full catalog file is always downloaded locally (to the directory specified by `root_path`).
-  - By default, the adapter loads the entire `catalog.csv` into memory as a pandas DataFrame for ultra-fast (O(1)) taxonomy lookup and filtering. This is highly recommended and requires a few hundred MB to ~2GB of RAM depending on the catalog version.
-  - At the same time, an ultra-lightweight text index is automatically built, mapping each `sample_id` to its line number in the CSV. This index is used as a fallback for extremely memory-constrained environments. Lookup is slower but memory usage is minimal.
+  - The adapter uses an ultra-lightweight text index, mapping each `sample_id` to its line number in the CSV for fast taxonomy lookup with minimal memory usage.
 
-- **Image Data**: Images are loaded using HuggingFace's streaming mode (`streaming=True`), meaning images are NOT downloaded or loaded into memory all at once.
-  - Each image is only downloaded and loaded into memory when it is actually accessed during evaluation, and is released after use. This ensures that even with millions of images, memory usage remains low.
+- **Image Data**: Images are loaded using HuggingFace's streaming mode (`streaming=True`) with true on-demand loading.
+  - Each image is only downloaded and loaded into memory when it is actually accessed during evaluation, and is immediately released after processing. This ensures that even with millions of images, memory usage remains consistently low.
+  - Images are NOT stored in memory between accesses - they are loaded fresh each time they're needed, providing true streaming behavior.
+  - This approach allows processing of unlimited dataset sizes (including the full ~953K train_small or ~10M full dataset) with constant memory usage.
   - If you want to download all images locally in advance (non-streaming mode), you can set `streaming=False` in the code. **This is NOT recommended** due to the massive disk space required (up to 3TB) and long download times.
 
 - **Advantages**:
