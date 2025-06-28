@@ -127,35 +127,108 @@ class TreeOfLifeAdapter(BaseDatasetAdapter):
         print(f"⏱️  Starting data processing...")
         
         # Convert streaming dataset to samples
-        samples = []
-        processed_count = 0
-        start_time = time.time()
-        
-        print("🔍 Processing samples with real taxonomic labels...")
-        
-        # Estimate total samples for progress tracking
-        estimated_total = None
-        if self.max_samples:
-            estimated_total = min(self.max_samples * 2, 10000)  # Conservative estimate
-            print(f"🎯 Target: {self.max_samples} valid samples (scanning up to {estimated_total} total)")
-        elif self.max_shards:
-            estimated_total = self.max_shards * 140000  # ~140K samples per shard
-            print(f"🎯 Processing {self.max_shards} shards (~{estimated_total//1000}K samples)")
+        if self.streaming:
+            # Streaming mode: Only create metadata for lazy loading (即用即扔)
+            print("🔍 Streaming mode: Creating lightweight metadata...")
+            samples = []
+            processed_count = 0
+            
+            # Store dataset reference for on-demand loading
+            self._dataset_for_streaming = dataset
+            
+            # Estimate how many samples to scan for metadata
+            if self.max_samples:
+                target_samples = self.max_samples
+                scan_limit = self.max_samples * 3  # Scan more to ensure we get enough valid ones
+            else:
+                target_samples = 10000  # Default reasonable limit for streaming
+                scan_limit = 30000
+            
+            print(f"🎯 Target: {target_samples} samples (scanning up to {scan_limit} for valid metadata)")
+            
+            try:
+                from tqdm import tqdm
+                progress_bar = tqdm(
+                    total=scan_limit,
+                    desc="Creating metadata",
+                    unit="samples",
+                    bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]"
+                )
+            except ImportError:
+                progress_bar = None
+            
+            # Only scan for metadata, don't load actual images
+            for idx, sample in enumerate(dataset):
+                if idx >= scan_limit or len(samples) >= target_samples:
+                    break
+                
+                if progress_bar:
+                    progress_bar.update(1)
+                
+                try:
+                    # Quick validation - only check if sample has required fields
+                    sample_id = sample.get('__key__', f'sample_{idx}')
+                    if sample.get('jpg') is None:
+                        continue
+                    
+                    # Quick taxonomy check without full processing
+                    taxonomy = self._get_taxonomy_from_catalog(sample_id)
+                    if not taxonomy:
+                        continue
+                    
+                    taxonomic_label = self._get_taxonomic_label_from_dict(taxonomy)
+                    if not taxonomic_label:
+                        continue
+                    
+                    # Store minimal metadata for lazy loading
+                    samples.append({
+                        'image_path': idx,  # Index for lazy loading
+                        'label': taxonomic_label,
+                        'sample_id': sample_id,
+                        # No image data stored (即用即扔)
+                    })
+                    
+                    processed_count += 1
+                    
+                except Exception as e:
+                    continue
+            
+            if progress_bar:
+                progress_bar.close()
+            
+            print(f"✅ Created metadata for {len(samples)} samples in streaming mode")
+            
         else:
-            estimated_total = 10000  # Default estimate for progress display
-            print(f"🎯 Processing samples (estimated ~{estimated_total//1000}K samples)")
-        
-        try:
-            from tqdm import tqdm
-            progress_bar = tqdm(
-                total=estimated_total,
-                desc="Processing samples",
-                unit="samples",
-                bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]"
-            )
-        except ImportError:
-            progress_bar = None
-            print("💡 Install tqdm for better progress tracking: pip install tqdm")
+            # Non-streaming mode: Original full processing
+            samples = []
+            processed_count = 0
+            start_time = time.time()
+            
+            print("🔍 Processing samples with real taxonomic labels...")
+            
+            # Estimate total samples for progress tracking
+            estimated_total = None
+            if self.max_samples:
+                estimated_total = min(self.max_samples * 2, 10000)  # Conservative estimate
+                print(f"🎯 Target: {self.max_samples} valid samples (scanning up to {estimated_total} total)")
+            elif self.max_shards:
+                estimated_total = self.max_shards * 140000  # ~140K samples per shard
+                print(f"🎯 Processing {self.max_shards} shards (~{estimated_total//1000}K samples)")
+            else:
+                estimated_total = 10000  # Default estimate for progress display
+                print(f"🎯 Processing samples (estimated ~{estimated_total//1000}K samples)")
+            
+            try:
+                from tqdm import tqdm
+                progress_bar = tqdm(
+                    total=estimated_total,
+                    desc="Processing samples",
+                    unit="samples",
+                    bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]"
+                )
+            except ImportError:
+                progress_bar = None
+                print("💡 Install tqdm for better progress tracking: pip install tqdm")
         
         for idx, sample in enumerate(dataset):
             processed_count += 1
@@ -348,13 +421,18 @@ class TreeOfLifeAdapter(BaseDatasetAdapter):
         return classes
     
     def __getitem__(self, index: int) -> Tuple[torch.Tensor, int]:
-        """Get a sample by index with lazy loading."""
+        """Get a sample by index with streaming support for lazy loading."""
         sample_info = self.data[index]
         
-        # Get image (already loaded by HuggingFace)
-        image = sample_info['image']
-        if not isinstance(image, Image.Image):
-            raise ValueError(f"Expected PIL Image, got {type(image)}")
+        # Check if we're in streaming mode
+        if hasattr(self, '_dataset_for_streaming') and self._dataset_for_streaming is not None:
+            # Streaming mode: load image on-demand (即用即扔)
+            image = self._load_image_on_demand(index)
+        else:
+            # Non-streaming mode: image already loaded
+            image = sample_info['image']
+            if not isinstance(image, Image.Image):
+                raise ValueError(f"Expected PIL Image, got {type(image)}")
         
         # Apply transform if specified
         if self.transform:
@@ -366,9 +444,42 @@ class TreeOfLifeAdapter(BaseDatasetAdapter):
             image = to_tensor(image)
         
         # Get label
-        label = self.class_to_idx[sample_info['taxonomic_label']]
+        label = self.class_to_idx[sample_info['label']]  # Use 'label' instead of 'taxonomic_label'
         
         return image, label
+
+    def _load_image_on_demand(self, index: int):
+        """Load image on-demand for streaming mode to save memory (即用即扔)."""
+        from PIL import Image
+        
+        try:
+            if self._dataset_for_streaming is None:
+                raise RuntimeError("Streaming dataset not available")
+            
+            sample_info = self.data[index]
+            target_idx = sample_info['image_path']  # Original index in the dataset
+            
+            # For streaming datasets, we need to iterate to the specific index
+            for i, sample in enumerate(self._dataset_for_streaming):
+                if i == target_idx:
+                    image = sample.get('jpg')  # TreeOfLife-10M uses 'jpg' field
+                    if image is None:
+                        raise ValueError("No image found in sample")
+                    
+                    if not isinstance(image, Image.Image):
+                        raise ValueError(f"Expected PIL Image, got {type(image)}")
+                    
+                    return image
+                elif i > target_idx:
+                    break
+            
+            # If we can't find the image, return a placeholder
+            print(f"Warning: Could not load image at index {index}, using placeholder")
+            return Image.new('RGB', (224, 224), color='gray')
+            
+        except Exception as e:
+            print(f"Error loading image at index {index}: {e}")
+            return Image.new('RGB', (224, 224), color='gray')
     
     def get_templates(self) -> List[str]:
         """Get text templates for TreeOfLife-10M dataset."""

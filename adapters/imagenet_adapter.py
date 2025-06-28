@@ -163,12 +163,12 @@ class ImageNetAdapter(BaseDatasetAdapter):
                 synset = f"synset_{sample['label']}"
             
             if self.streaming:
-                # In streaming mode, keep PIL image object directly to avoid file I/O
+                # In streaming mode, only store metadata - no image objects (即用即扔)
                 data.append({
-                    'image_path': idx,  # Use index as identifier
+                    'image_path': idx,  # Use index as identifier for lazy loading
                     'label': sample['label'],  # This is the class index (0-999)
                     'synset': synset,  # This is the synset string (e.g., 'n01440764')
-                    'image_obj': sample['image']  # Keep original PIL object
+                    # No image_obj stored - will be loaded on-demand in __getitem__
                 })
             else:
                 # In offline mode, save image temporarily to match base class interface
@@ -190,6 +190,10 @@ class ImageNetAdapter(BaseDatasetAdapter):
         
         print(f"Successfully processed {len(data)} samples")
         
+        # Store dataset reference for on-demand loading in streaming mode
+        self._dataset_for_streaming = self.dataset if self.streaming else None
+        self._streaming_total = total  # Store total count for streaming access
+
         return data
 
     def _get_classes(self) -> List[str]:
@@ -226,12 +230,12 @@ class ImageNetAdapter(BaseDatasetAdapter):
         return DatasetTemplates.get_templates()
 
     def __getitem__(self, index: int) -> Tuple[torch.Tensor, int]:
-        """Get a sample by index, handling both streaming and offline modes."""
+        """Get a sample by index, handling both streaming and offline modes with lazy loading."""
         item = self.data[index]
         
         if self.streaming:
-            # In streaming mode, use the PIL image object directly
-            image = item['image_obj']
+            # In streaming mode, load image on-demand (即用即扔)
+            image = self._load_image_on_demand(index)
         else:
             # In offline mode, load from temporary file path
             image_path = item['image_path']
@@ -255,3 +259,29 @@ class ImageNetAdapter(BaseDatasetAdapter):
         label = item['label']
         
         return image, label
+
+    def _load_image_on_demand(self, index: int) -> Image.Image:
+        """Load image on-demand for streaming mode to save memory (即用即扔)."""
+        try:
+            if self._dataset_for_streaming is None:
+                raise RuntimeError("Dataset not available for streaming")
+            
+            # For streaming datasets, we need to iterate to the specific index
+            # This is not efficient for random access, but saves memory
+            for i, sample in enumerate(self._dataset_for_streaming):
+                if i == index:
+                    image = sample['image']
+                    if hasattr(image, 'convert'):
+                        if image.mode != 'RGB':
+                            image = image.convert('RGB')
+                    return image
+                elif i > index:
+                    break
+            
+            # If we can't find the image, return a placeholder
+            print(f"Warning: Could not load image at index {index}, using placeholder")
+            return Image.new('RGB', (224, 224), color='gray')
+            
+        except Exception as e:
+            print(f"Error loading image at index {index}: {e}")
+            return Image.new('RGB', (224, 224), color='gray')
