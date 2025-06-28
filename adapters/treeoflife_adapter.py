@@ -193,11 +193,6 @@ class TreeOfLifeAdapter(BaseDatasetAdapter):
                     if not self._get_taxonomy_from_catalog(sample_id):
                         catalog_misses += 1
                     
-                # Early exit if we have enough samples for testing
-                if len(samples) >= (self.max_samples or 1000):
-                    print(f"\n✅ Found enough samples for evaluation ({len(samples)}), stopping")
-                    break
-                    
             except KeyboardInterrupt:
                 print(f"\n⚠️ User interrupted at sample {processed_count}")
                 break

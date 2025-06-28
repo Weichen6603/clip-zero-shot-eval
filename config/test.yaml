@@ -38,15 +38,15 @@ datasets:
     taxonomic_level: "species"        # Classification level: species, genus, family, order, class, phylum, kingdom
     exclude_partial_labels: false    # Whether to exclude samples without full taxonomic hierarchy
     
-    # train_small is already a curated lightweight subset
-    max_samples: null                 # Use all train_small samples (~953K images)
+    # Set a reasonable sample limit for testing (remove max_samples: null to use all)
+    max_samples: null                 # Test with 5000 samples instead of all ~953K images
     min_images_per_class: 1           # Minimum images per taxonomic class to include
     use_precomputed_embeddings: true  # Use BioCLIP text embeddings when available
 
-  # SUN397 dataset configuration for testing
-  - name: "SUN397"
-    type: "sun397"
-    streaming: true  # Enable HuggingFace streaming mode for online image loading
-    root_path: "./data/sun397"  # Cache directory for SUN397 dataset
-    output_dir: "./results/sun397_evaluation"
-    split: "train"  # SUN397 only has train split, will be auto-split for testing
+  # # SUN397 dataset configuration for testing
+  # - name: "SUN397"
+  #   type: "sun397"
+  #   streaming: true  # Enable HuggingFace streaming mode for online image loading
+  #   root_path: "./data/sun397"  # Cache directory for SUN397 dataset
+  #   output_dir: "./results/sun397_evaluation"
+  #   split: "train"  # SUN397 only has train split, will be auto-split for testing
