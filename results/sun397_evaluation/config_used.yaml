@@ -11,3 +11,4 @@ datasets:
   type: sun397
   root_path: /mnt/d/data/sun397
   split: train
+  streaming: true

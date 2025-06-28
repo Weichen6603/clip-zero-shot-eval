@@ -17,5 +17,6 @@ datasets:
   # SUN397 dataset using Windows D drive for data storage
   - name: "SUN397"
     type: "sun397"
-    root_path: "/mnt/d/data/sun397"  # Windows D:\data\sun397 accessed via WSL
+    streaming: true  # Enable HuggingFace streaming mode for online image loading
+    root_path: "/mnt/d/data/sun397"
     split: "train"  # SUN397 only has train split, will be auto-split for testing

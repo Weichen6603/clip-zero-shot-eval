@@ -222,30 +222,40 @@ class ZeroShotEvaluator:
         return all_results
 
     def _save_individual_dataset_results(self, dataset_name: str, results: Dict[str, Any], config=None):
-        """Save individual dataset results to its corresponding directory, using root_path for naming."""
-        # Try to get root_path from results['model_info'] or results dict
-        root_path = None
-        if 'root_path' in results:
-            root_path = results['root_path']
-        elif 'model_info' in results and 'root_path' in results['model_info']:
-            root_path = results['model_info']['root_path']
-        # Fallback: try to infer from dataset_name
-        if not root_path:
-            # fallback: use dataset_name
-            dir_name = dataset_name.lower().replace('-', '_') + '_evaluation'
+        """Save individual dataset results to its corresponding directory, using output_dir from config if available, else root_path for naming."""
+        # Try to get output_dir from config (per-dataset)
+        output_dir = None
+        if config and isinstance(config, dict):
+            # config can be the full config or a dataset config
+            if 'output_dir' in config:
+                output_dir = config['output_dir']
+            elif 'datasets' in config:
+                # Try to find the dataset config by name
+                for ds in config['datasets']:
+                    if ds.get('name', '').lower() == dataset_name.lower():
+                        output_dir = ds.get('output_dir', None)
+                        break
+        if output_dir:
+            individual_save_dir = output_dir
         else:
-            # Use last part of root_path as directory name
-            last_part = os.path.basename(os.path.normpath(root_path))
-            dir_name = f"{last_part}_evaluation"
-        individual_save_dir = f"./results/{dir_name}"
+            # Fallback to root_path logic
+            root_path = None
+            if 'root_path' in results:
+                root_path = results['root_path']
+            elif 'model_info' in results and 'root_path' in results['model_info']:
+                root_path = results['model_info']['root_path']
+            if not root_path:
+                dir_name = dataset_name.lower().replace('-', '_') + '_evaluation'
+            else:
+                last_part = os.path.basename(os.path.normpath(root_path))
+                dir_name = f"{last_part}_evaluation"
+            individual_save_dir = f"./results/{dir_name}"
         os.makedirs(individual_save_dir, exist_ok=True)
-        
         # Save config file if provided
         if config:
             from config_parser import ConfigParser
             config_save_path = os.path.join(individual_save_dir, 'config_used.yaml')
             ConfigParser.save_config(config, config_save_path)
-        
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         results_file = os.path.join(individual_save_dir, f"results_{timestamp}.json")
         with open(results_file, 'w') as f:

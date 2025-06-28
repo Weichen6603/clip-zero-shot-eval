@@ -1,15 +1,9 @@
 # TreeOfLife-10M Configuration - Using Official train_small Split
-# 🎯 SOLUTION: Uses official train_small split to avoid empty shard problems
-# 
-# Previous issues with max_shards=3:
-# - First 3 shards were empty/incomplete (0 taxonomy data)
-# - Caused "confusor" labeling and slow processing
-# 
+
+
 # train_small advantages:
 # - Official curated subset (953K images vs 9.5M in full train)
 # - Balanced taxonomic distribution
-# - ~265GB download (vs 3TB for full dataset)
-# - No shard selection needed
 
 # CLIP model configuration
 clip_model: "ViT-B/32"  # Options: RN50, RN101, RN50x4, RN50x16, ViT-B/32, ViT-B/16, ViT-L/14
@@ -27,15 +21,14 @@ save_results: true
 
 # Dataset configurations
 datasets:
-  # TreeOfLife-10M using official train_small split (953K images, ~265GB)
+  # TreeOfLife-10M using official train_small split (953K images)
   - name: "TreeOfLife-10M-TrainSmall"
     type: "treeoflife"
     root_path: "/mnt/d/data/treeoflife"  # Cache directory for HuggingFace datasets
-    split: "train_small"      # Use official lightweight split instead of limiting shards
+    split: "train_small"      # Use official lightweight split
     
     # Taxonomic configuration
     taxonomic_level: "species"        # Classification level: species, genus, family, order, class, phylum, kingdom
-    use_common_names: true            # Include common names in text templates
     exclude_partial_labels: false    # Whether to exclude samples without full taxonomic hierarchy
     
     # train_small is already a curated lightweight subset
@@ -61,17 +54,9 @@ datasets:
     # taxonomic_level: "species"
     
     # 🚀 Large-scale evaluation (within lightweight constraints):
-    # max_samples: null  # Use all samples from 3 shards
+    # max_samples: null  # Use all samples
     # min_images_per_class: 10
     # taxonomic_level: "species"
-    
-    # Expected results (current lightweight config with 3 shards):
-    # - Samples: ~300,000 images (from 3 shards, ~100K each)
-    # - Classes: Varies by taxonomic_level (Species: ~thousands, Kingdom: ~12)
-    # - Dataset size: ~90GB (instead of 3TB full dataset)
-    # - Evaluation time: ~30-60 minutes (instead of days)
-    # - Memory usage: Moderate (streaming from 3 cached shards)
-    # - Perfect for: Algorithm development, quick CLIP evaluation, CI/CD testing
     
     # 💡 Performance optimization tips:
     # - Start with taxonomic_level: "family" for faster testing

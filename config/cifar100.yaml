@@ -8,9 +8,9 @@ batch_size: 32
 num_workers: 4
 save_predictions: false  # Save individual predictions (large files)
 
-# Output settings
+# General output settings
 output_dir: "./results/cifar100_evaluation"
-save_results: true
+save_results: false
 
 # Dataset configurations
 datasets:
@@ -18,6 +18,7 @@ datasets:
   - name: "CIFAR100_Fine"
     type: "cifar100"
     root_path: "/mnt/d/data/cifar100"
+    output_dir: "./results/cifar100_fine_eval"
     split: "test"  # train or test
     use_coarse_labels: false  # Use 100 fine-grained classes
 
@@ -25,5 +26,6 @@ datasets:
   - name: "CIFAR100_Coarse"
     type: "cifar100"
     root_path: "/mnt/d/data/cifar100"
+    output_dir: "./results/cifar100_coarse_eval"
     split: "test"  # train or test
     use_coarse_labels: true  # Use 20 coarse-grained classes

@@ -25,11 +25,10 @@ datasets:
     
     # Taxonomic configuration
     taxonomic_level: "species"           # Classification level: species, genus, family, order, class, phylum, kingdom
-    use_common_names: true               # Include common names in text templates
     exclude_partial_labels: false       # Whether to exclude samples without full taxonomic hierarchy
     
-    # Full dataset parameters - download all 73 shards (~3TB)
-    # max_shards: null                   # Download all 73 shards (complete dataset)
+    # Full dataset parameters - all 73 shards (~3TB)
+    # max_shards: null                   # Use all 73 shards (online/download complete dataset)
     # max_samples: null                  # Use all ~10M+ samples (no limit)
     min_images_per_class: 5              # Minimum images per taxonomic class to include (higher for better quality)
     use_precomputed_embeddings: true     # Use BioCLIP text embeddings when available

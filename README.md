@@ -45,6 +45,15 @@ huggingface-cli login
 
 ## Quick Start
 
+### Data Loading Modes: Online (Streaming) vs. Offline (Local Caching)
+
+This framework supports two main data loading modes for large datasets:
+
+- **Online (Streaming) Mode**: Images are loaded on demand from HuggingFace during evaluation, not all downloaded at once. This keeps memory and disk usage low, and is recommended for most users and large datasets. Enable by setting `streaming: true` in the config.
+- **Offline (Local Caching) Mode**: All images are downloaded and cached locally before evaluation. This can be faster for repeated runs if you have enough disk space, but requires significant storage. Enable by setting `streaming: false` (or omitting the option for some datasets).
+
+Most adapters default to the recommended mode for their dataset size. You can override this in the config if needed.
+
 ### Available Datasets
 
 Choose from our pre-configured datasets and run evaluations immediately:
@@ -56,12 +65,14 @@ python evaluate.py config/cifar10.yaml
 - **Dataset**: Automatically downloaded via torchvision
 - **Classes**: 10 basic categories (airplane, car, bird, cat, etc.)
 
-#### CIFAR-100 (100 classes, ~32x32 images)
+#### CIFAR-100 (100 fine classes or 20 coarse superclasses, ~32x32 images)
 ```bash
 python evaluate.py config/cifar100.yaml
 ```
 - **Dataset**: Automatically downloaded via torchvision
-- **Classes**: 100 detailed categories with fine/coarse labels
+- **Classes**: Supports both 100 fine-grained categories (e.g., apple, aquarium_fish, baby, ...) and 20 coarse superclasses (e.g., aquatic_mammals, flowers, vehicles, ...)
+- **Configurable**: Use `use_coarse_labels: false` for fine labels, `use_coarse_labels: true` for coarse labels in the config file
+- **Note**: The provided `cifar100.yaml` integrates both fine and coarse label evaluation—run once to get both results.
 
 #### SUN397 (397 scene categories, large-scale)
 ```bash
@@ -69,6 +80,7 @@ python evaluate.py config/sun397.yaml
 ```
 - **Dataset**: Automatically downloaded via HuggingFace
 - **Classes**: 397 scene categories (abbey, airport, alley, etc.)
+- **Image loading supports HuggingFace streaming mode (recommended)**
 
 #### ImageNet-1K (Original ILSVRC2012, 1000 classes, requires access approval)
 ```bash
@@ -77,7 +89,7 @@ python evaluate.py config/imagenet.yaml
 ```
 - **Dataset**: Original ImageNet-1K (ILSVRC2012) via HuggingFace (requires approval)
 - **Classes**: 1000 object categories from the ImageNet Large Scale Visual Recognition Challenge 2012
-- **Note**: This is the original ImageNet dataset, not variants like ImageNetV2, ImageNet-A, ImageNet-R, etc.
+- **Image loading supports HuggingFace streaming mode (recommended)**
 
 #### Visual Genome (2000+ object types, complex scenes)
 ```bash
@@ -85,7 +97,7 @@ python evaluate.py config/visual_genome.yaml
 ```
 - **Dataset**: Automatically downloaded via HuggingFace
 - **Classes**: 2000+ unique object types in rich visual scenes
-- **Features**: Lazy loading for memory efficiency
+- **Image loading supports HuggingFace streaming mode (recommended)**
 
 #### TreeOfLife-10M (454K+ biological taxa, lightweight testing)
 ```bash
@@ -97,10 +109,7 @@ python evaluate.py config/treeoflife_full.yaml
 ```
 - **Dataset**: TreeOfLife-10M via HuggingFace 
 - **Classes**: 454,000+ taxa across the entire tree of life (configurable taxonomic level)
-- **Sources**: iNaturalist21, BIOSCAN-1M, Encyclopedia of Life
-- **Lightweight mode**: Uses the official `train_small` split (953K images, ~265GB, balanced and curated)
-- **Full mode**: Uses the full `train` split (9.5M images, ~3TB)
-- **Label filtering**: All uncertain/confusing/hybrid labels (e.g., `confusor`, `sp.`, `x`, `unknown`, `n/a`, `nan`, `none`) are automatically filtered out during evaluation to ensure scientific validity and reproducibility.
+- **Image loading supports HuggingFace streaming mode (recommended)**
 
 ### Custom Configuration
 
@@ -263,6 +272,8 @@ Monitor your system resources and adjust:
 - **Setup Requirements**:
   1. **Authentication**: `huggingface-cli login`
   2. **Dataset Access**: Request access to `imagenet-1k` on HuggingFace
+- **Image Loading**:
+  - Supports HuggingFace streaming (online) mode via the config
 
 #### Visual Genome
 - **Classes**: 2,000+ unique object types in rich visual scenes
@@ -352,7 +363,7 @@ huggingface-cli login
 
 ##### Common Features (Both Versions)
 - **Classes**: 454,000+ taxa across the entire tree of life (configurable by taxonomic level)
-- **Source**: TreeOfLife-10M dataset via HuggingFace (iNaturalist21, BIOSCAN-1M, Encyclopedia of Life)
+- **Source**: TreeOfLife-10M via HuggingFace (iNaturalist21, BIOSCAN-1M, Encyclopedia of Life)
 - **Authentication**: Requires HuggingFace login for dataset access
 - **Usage**: `type: "treeoflife"`
 - **Features**:
@@ -361,6 +372,27 @@ huggingface-cli login
   - **Multi-source Data**: Combines expert-labeled museum specimens, field photos, and curated images
   - **Biological Diversity**: Covers animals, plants, fungi, and microorganisms
   - **Strict label filtering**: All uncertain/confusing/hybrid labels (e.g., `confusor`, `sp.`, `x`, `unknown`, `n/a`, `nan`, `none`) are automatically filtered out during evaluation to ensure scientific validity and reproducibility.
+
+---
+
+### TreeOfLife-10M Data Loading, Catalog Indexing, and Memory Usage
+
+- **Catalog Table (`catalog.csv`)**: On first run, the full catalog file is always downloaded locally (to the directory specified by `root_path`).
+  - By default, the adapter loads the entire `catalog.csv` into memory as a pandas DataFrame for ultra-fast (O(1)) taxonomy lookup and filtering. This is highly recommended and requires a few hundred MB to ~2GB of RAM depending on the catalog version.
+  - At the same time, an ultra-lightweight text index is automatically built, mapping each `sample_id` to its line number in the CSV. This index is used as a fallback for extremely memory-constrained environments. Lookup is slower but memory usage is minimal.
+
+- **Image Data**: Images are loaded using HuggingFace's streaming mode (`streaming=True`), meaning images are NOT downloaded or loaded into memory all at once.
+  - Each image is only downloaded and loaded into memory when it is actually accessed during evaluation, and is released after use. This ensures that even with millions of images, memory usage remains low.
+  - If you want to download all images locally in advance (non-streaming mode), you can set `streaming=False` in the code. **This is NOT recommended** due to the massive disk space required (up to 3TB) and long download times.
+
+- **Advantages**:
+  - Catalog lookups are extremely fast and support complex filtering.
+  - Image processing is efficient and resource-friendly, suitable for very large biodiversity datasets.
+
+- **Notes**:
+  - The ultra-lightweight text index is built only once and reused for future runs.
+  - If you run out of RAM when loading the catalog, the adapter will automatically fall back to the text index, but evaluation will be slower.
+  - For full local image access, set `streaming=False` (not recommended except for special use cases).
 
 ##### Configuration Parameters (Both Versions)
 ```yaml
@@ -371,26 +403,11 @@ huggingface-cli login
   
   # Taxonomic configuration
   taxonomic_level: "species"            # species, genus, family, order, class, phylum, kingdom
-  use_common_names: true                # Include common names in text templates
   exclude_partial_labels: false        # Filter samples without full taxonomy
   
   # Version-specific parameters
-  max_shards: 3                         # Lightweight: 3, Full: null (all 73 shards)
   min_images_per_class: 1               # Minimum samples per taxonomic class
 ```
-
-##### Parameter Guide
-- **`taxonomic_level`**: Choose classification granularity
-  - `"species"`: Finest-grained (454K+ classes, most challenging)
-  - `"genus"`: Moderate granularity (good balance of diversity and feasibility)
-  - `"family"`: Broader categories (manageable class count for testing)
-  - `"kingdom"`: Coarsest level (animals, plants, fungi, etc.)
-- **`max_shards`**: Control dataset size
-  - `3`: Lightweight version (~265GB, `train_small` split)
-  - `null`: Full version (~3TB, all data)
-- **`min_images_per_class`**: Filter rare taxa
-  - Higher values = fewer but better-represented classes
-  - Lower values = more taxonomic diversity but potential class imbalance
 
 ## Output Structure
 

@@ -7,12 +7,12 @@ device: "cuda"  # cuda or cpu
 use_ensemble: true  # Whether to use multiple templates for text encoding
 
 # Evaluation settings
-batch_size: 16  # Smaller batch size for ImageNet due to larger images
+batch_size: 32  # Smaller batch size for ImageNet due to larger images
 num_workers: 8
 save_predictions: false  # Save individual predictions (large files)
 
 # Output settings
-output_dir: "./results/imagenet_evaluation"
+output_dir: "./results/imagenet_1k_evaluation"
 save_results: true
 
 # Dataset configurations
@@ -20,5 +20,6 @@ datasets:
   # ImageNet dataset from Hugging Face (official imagenet-1k)
   - name: "ImageNet-1K"
     type: "imagenet"
+    streaming: true  # Set to true to enable HuggingFace streaming mode
     root_path: "/mnt/d/data/imagenet"  # Cache directory on Windows D: drive via WSL mount
     split: "validation"  # Use validation split (50K images)

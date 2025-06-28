@@ -27,7 +27,8 @@ class ImageNetAdapter(BaseDatasetAdapter):
         # Set cache directory to the specified path
         self.cache_dir = root_path
         self.dataset = None  # Will be loaded in _load_data
-        
+        self.max_samples = kwargs.get("max_samples", None)
+
         super().__init__(root_path, transform, split, **kwargs)
 
     def _load_data(self, **kwargs):
@@ -59,7 +60,11 @@ class ImageNetAdapter(BaseDatasetAdapter):
             )
             print(f"Successfully loaded dataset")
             print(f"Dataset info: {self.dataset}")
-            print(f"Dataset features: {self.dataset.features}")
+            # Only print features if dataset is not a dict (i.e., is a Dataset or IterableDataset)
+            if not isinstance(self.dataset, dict):
+                print(f"Dataset features: {self.dataset.features}")
+            else:
+                print(f"Dataset is a dict type ({type(self.dataset)}), skipping features print.")
         except Exception as e:
             print(f"Error loading dataset: {e}")
             print("Note: You may need to authenticate with Hugging Face:")
@@ -71,15 +76,28 @@ class ImageNetAdapter(BaseDatasetAdapter):
         # Convert to our format
         data = []
         print("Processing dataset samples...")
-        for idx, sample in enumerate(self.dataset):
-            if idx >= 1000:  # Limit for testing, remove this line for full dataset
+        try:
+            from tqdm import tqdm
+        except ImportError:
+            print("tqdm not installed. Install it with: pip install tqdm")
+            tqdm = lambda x, **kwargs: x  # fallback: no progress bar
+        total = self.max_samples if self.max_samples is not None else None
+        for idx, sample in enumerate(tqdm(self.dataset, total=total, desc="Processing samples")):
+            if self.max_samples is not None and idx >= self.max_samples:
                 break
             
             # Get synset string using int2str method
             synset = None
             try:
-                synset = self.dataset.features['label'].int2str(sample['label'])
-            except:
+                if self.dataset is not None and not isinstance(self.dataset, dict):
+                    features = getattr(self.dataset, 'features', None)
+                    if features is not None and 'label' in features:
+                        synset = features['label'].int2str(sample['label'])
+                    else:
+                        synset = f"synset_{sample['label']}"
+                else:
+                    synset = f"synset_{sample['label']}"
+            except Exception as e:
                 synset = f"synset_{sample['label']}"
             
             # Save image temporarily to match base class interface
@@ -98,8 +116,6 @@ class ImageNetAdapter(BaseDatasetAdapter):
                 'synset': synset,  # This is the synset string (e.g., 'n01440764')
                 'image_obj': sample['image']  # Keep original PIL object for reference
             })
-            if idx % 1000 == 0:
-                print(f"Processed {idx} samples...")
         
         print(f"Successfully processed {len(data)} samples")
         
@@ -109,22 +125,25 @@ class ImageNetAdapter(BaseDatasetAdapter):
         """Get ImageNet class names using the full 1000 classes from the dataset features."""
         if self.dataset is None:
             return []
-        
         try:
-            # Use the dataset features to get all 1000 class names
-            # This ensures we have the complete mapping even if we only process a subset of samples
-            label_feature = self.dataset.features['label']
-            if hasattr(label_feature, 'names'):
-                # This should give us all 1000 ImageNet class names
-                return label_feature.names
+            # Only access features if dataset is not a dict and features is not None
+            if not isinstance(self.dataset, dict):
+                features = getattr(self.dataset, 'features', None)
+                if features is not None and 'label' in features:
+                    label_feature = features['label']
+                    if hasattr(label_feature, 'names'):
+                        return label_feature.names
+                    else:
+                        print("Warning: Could not get class names from dataset features")
+                        return [f"class_{i}" for i in range(1000)]
+                else:
+                    print(f"Warning: features is None or missing 'label', cannot extract class names.")
+                    return [f"class_{i}" for i in range(1000)]
             else:
-                # Fallback: This shouldn't happen with the official dataset
-                print("Warning: Could not get class names from dataset features")
+                print(f"Warning: self.dataset is a dict type ({type(self.dataset)}), cannot extract class names from features.")
                 return [f"class_{i}" for i in range(1000)]
-                
         except Exception as e:
             print(f"Warning: Could not extract class names from features: {e}")
-            # Fallback: create 1000 generic class names
             return [f"class_{i}" for i in range(1000)]
 
     def get_templates(self) -> List[str]:

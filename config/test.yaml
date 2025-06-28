@@ -1,0 +1,44 @@
+# CLIP Zero-Shot Evaluation Configuration
+# Supports multiple datasets: ImageNet-1K, TreeOfLife-10M
+
+# CLIP model configuration
+clip_model: "ViT-B/32"  # Options: RN50, RN101, RN50x4, RN50x16, ViT-B/32, ViT-B/16, ViT-L/14
+device: "cuda"  # cuda or cpu
+use_ensemble: true  # Whether to use multiple templates for text encoding
+
+# Evaluation settings
+batch_size: 32  # Optimized batch size for memory efficiency
+num_workers: 8  # Number of data loading workers
+save_predictions: false  # Save individual predictions (large files)
+
+# General output settings
+save_results: false
+
+# Dataset configurations
+datasets:
+  # ImageNet dataset from Hugging Face (official imagenet-1k)
+  - name: "ImageNet-1K"
+    type: "imagenet"
+    streaming: true  # Set to true to enable HuggingFace streaming mode
+    root_path: "/mnt/d/data/imagenet"  # Cache directory on Windows D: drive via WSL mount
+    output_dir: "./results/imagenet_1k_evaluation"
+    save_predictions: false
+    split: "validation"  # Use validation split (50K images)
+    # max_samples: 1000  # Uncomment to limit for quick tests
+
+  # TreeOfLife-10M using official train_small split (953K images)
+  - name: "TreeOfLife-10M-TrainSmall"
+    type: "treeoflife"
+    root_path: "/mnt/d/data/treeoflife"  # Cache directory for HuggingFace datasets
+    output_dir: "./results/treeoflife_lightweight"
+    split: "train_small"      # Use official lightweight split instead of limiting shards
+    
+    # Taxonomic configuration
+    taxonomic_level: "species"        # Classification level: species, genus, family, order, class, phylum, kingdom
+    use_common_names: true            # Include common names in text templates
+    exclude_partial_labels: false    # Whether to exclude samples without full taxonomic hierarchy
+    
+    # train_small is already a curated lightweight subset
+    max_samples: null                 # Use all train_small samples (~953K images)
+    min_images_per_class: 1           # Minimum images per taxonomic class to include
+    use_precomputed_embeddings: true  # Use BioCLIP text embeddings when available

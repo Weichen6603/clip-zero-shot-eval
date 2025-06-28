@@ -12,8 +12,7 @@ num_workers: 8  # Number of data loading workers
 save_predictions: false  # Save individual predictions (large files)
 
 # Output settings
-output_dir: "./results/comprehensive_evaluation"
-save_results: true
+save_results: false
 
 # Dataset configurations
 datasets:
@@ -40,32 +39,33 @@ datasets:
   # SUN397 scene recognition dataset
   - name: "SUN397"
     type: "sun397"
+    streaming: true
     root_path: "/mnt/d/data/sun397"
     split: "train"
 
   # ImageNet-1K validation set
   - name: "ImageNet-1K"
     type: "imagenet"
+    streaming: true
     root_path: "/mnt/d/data/imagenet"
     split: "validation"
 
   # Visual Genome with WordNet synsets (recommended)
   - name: "VisualGenome-Objects-Synsets"
     type: "visual_genome"
+    streaming: true
     root_path: "/mnt/d/data/visual_genome"
     split: "train"
     config_name: "objects_v1.2.0"
-    max_samples: 5000        # Limit samples for reasonable evaluation time
+    max_samples: null      
     min_objects: 1
-    max_objects: 20
     use_synsets: true        # Use WordNet synsets for better semantic quality
 
   # TreeOfLife-10M Lightweight (biological dataset)
   - name: "TreeOfLife-10M-Lightweight"
     type: "treeoflife"
+    streaming: true
     root_path: "/mnt/d/data/treeoflife"
     split: "train"
     config_name: "train_small"
-    max_samples: 2000        # Lightweight testing for comprehensive evaluation
-    max_shard_count: 3       # Limit data download
     taxonomic_level: "species"
