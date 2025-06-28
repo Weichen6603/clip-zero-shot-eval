@@ -1,5 +1,5 @@
 # TreeOfLife Configuration - Quick Test Version
-# Uses train_small with sample limit for rapid testing
+# Uses train split with sample and shard limits for rapid testing
 
 # CLIP model configuration
 clip_model: "ViT-B/32"
@@ -7,8 +7,8 @@ device: "cuda"
 use_ensemble: true
 
 # Evaluation settings
-batch_size: 64  # Larger batch for faster processing
-num_workers: 8
+batch_size: 16  # Smaller batch for large images
+num_workers: 4  # Reduced workers to avoid memory issues
 save_predictions: false
 
 # Output settings
@@ -17,17 +17,19 @@ save_results: true
 
 # Dataset configurations
 datasets:
-  # TreeOfLife-10M Quick Test (train_small subset)
+  # TreeOfLife-10M Quick Test
   - name: "TreeOfLife-10M-QuickTest"
     type: "treeoflife"
-    root_path: "/mnt/d/data/treeoflife"
-    split: "train_small"      # Use official lightweight split
+    root_path: "./data/treeoflife"  # Use relative path
+    split: "train"  # Use train split
     
     # Quick test configuration
-    max_samples: 50        # Just 50 samples for rapid testing
+    max_samples: 100       # Just 100 samples for testing
+    max_shards: 1          # Only process first shard
     taxonomic_level: "species"
     use_common_names: true
     exclude_partial_labels: false
+    min_images_per_class: 1
     min_images_per_class: 1
     use_precomputed_embeddings: true
     

@@ -5,11 +5,16 @@ import sys
 import time
 import random
 import sqlite3
+import warnings
 from typing import List, Dict, Any, Optional, Tuple
 from collections import defaultdict, Counter
 from PIL import Image
 import torch
 import pandas as pd
+
+# Configure PIL to handle large images and suppress warnings
+Image.MAX_IMAGE_PIXELS = None  # Remove size limit
+warnings.filterwarnings("ignore", category=Image.DecompressionBombWarning)
 
 # Add parent directory to path for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -36,7 +41,7 @@ class TreeOfLifeAdapter(BaseDatasetAdapter):
                  max_samples: Optional[int] = None, taxonomic_level: str = "species",
                  use_common_names: bool = True, min_images_per_class: int = 1,
                  exclude_partial_labels: bool = False, use_precomputed_embeddings: bool = False,
-                 max_shards: Optional[int] = None, streaming: bool = True, **kwargs):
+                 max_shards: Optional[int] = None, **kwargs):
         """
         Initialize TreeOfLife-10M adapter.
         
@@ -61,11 +66,6 @@ class TreeOfLifeAdapter(BaseDatasetAdapter):
         self.use_precomputed_embeddings = use_precomputed_embeddings
         self.max_shards = max_shards
         self.catalog_db_path = None  # Will hold SQLite database path
-        # streaming config: explicit arg > kwargs > default True
-        if 'streaming' in kwargs:
-            self.streaming = kwargs['streaming']
-        else:
-            self.streaming = streaming
         
         # Validate taxonomic level
         valid_levels = ['species', 'genus', 'family', 'order', 'class', 'phylum', 'kingdom']
@@ -106,12 +106,12 @@ class TreeOfLifeAdapter(BaseDatasetAdapter):
             )
             print(f"✅ Downloaded catalog.csv to: {catalog_path}")
             
-            # Initialize pandas-based lazy loading
+            # Initialize text-based catalog reader
             self._init_catalog_lazy_reader(catalog_path)
             
         except Exception as e:
             print(f"⚠️  Could not download catalog.csv: {e}")
-            print("📡 Falling back to streaming mode with pseudo-random classification...")
+            print("📡 Falling back to streaming mode without catalog lookup...")
             self.catalog_db_path = None
         
         # Step 2: Load the streaming dataset
@@ -119,7 +119,7 @@ class TreeOfLifeAdapter(BaseDatasetAdapter):
         dataset = load_dataset(
             dataset_name, 
             split="train",
-            streaming=self.streaming,
+            streaming=True,
             cache_dir=self.root_path
         )
         
@@ -129,92 +129,35 @@ class TreeOfLifeAdapter(BaseDatasetAdapter):
         # Convert streaming dataset to samples
         samples = []
         processed_count = 0
-        start_time = time.time()  # Initialize start_time for both modes
+        failed_images = []  # Track failed image loading
+        catalog_misses = 0  # Track catalog lookup failures
+        start_time = time.time()
         
-        if self.streaming:
-            # Streaming mode: Only create metadata for lazy loading (即用即扔)
-            print("🔍 Streaming mode: Creating lightweight metadata...")
-            samples = []
-            processed_count = 0
-            
-            # Store dataset reference for on-demand loading
-            self._dataset_for_streaming = dataset
-            
-            # Estimate how many samples to scan for metadata
-            if self.max_samples:
-                target_samples = self.max_samples
-                scan_limit = self.max_samples * 3  # Scan more to ensure we get enough valid ones
-            else:
-                target_samples = 10000  # Default reasonable limit for streaming
-                scan_limit = 30000
-            
-            print(f"🎯 Target: {target_samples} samples (scanning up to {scan_limit} for valid metadata)")
-            
-            try:
-                from tqdm import tqdm
-                progress_bar = tqdm(
-                    total=scan_limit,
-                    desc="Creating metadata",
-                    unit="samples",
-                    bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]"
-                )
-            except ImportError:
-                progress_bar = None
-            
-            # Only scan for metadata, don't load actual images
-            for idx, sample in enumerate(dataset):
-                if idx >= scan_limit or len(samples) >= target_samples:
-                    break
-                
-                if progress_bar:
-                    progress_bar.update(1)
-                
-                try:
-                    # Use the unified processing method in streaming mode
-                    sample_info = self._process_hf_sample(sample, idx, streaming_mode=True)
-                    if sample_info:
-                        samples.append(sample_info)
-                        processed_count += 1
-                    
-                except Exception as e:
-                    continue
-            
-            if progress_bar:
-                progress_bar.close()
-            
-            print(f"✅ Created metadata for {len(samples)} samples in streaming mode")
-            
+        print("🔍 Processing samples with real taxonomic labels...")
+        
+        # Estimate total samples for progress tracking
+        estimated_total = None
+        if self.max_samples:
+            estimated_total = min(self.max_samples * 2, 10000)  # Conservative estimate
+            print(f"🎯 Target: {self.max_samples} valid samples (scanning up to {estimated_total} total)")
+        elif self.max_shards:
+            estimated_total = self.max_shards * 140000  # ~140K samples per shard
+            print(f"🎯 Processing {self.max_shards} shards (~{estimated_total//1000}K samples)")
         else:
-            # Non-streaming mode: Original full processing
-            samples = []
-            processed_count = 0
-            start_time = time.time()
-            
-            print("🔍 Processing samples with real taxonomic labels...")
-            
-            # Estimate total samples for progress tracking
-            estimated_total = None
-            if self.max_samples:
-                estimated_total = min(self.max_samples * 2, 10000)  # Conservative estimate
-                print(f"🎯 Target: {self.max_samples} valid samples (scanning up to {estimated_total} total)")
-            elif self.max_shards:
-                estimated_total = self.max_shards * 140000  # ~140K samples per shard
-                print(f"🎯 Processing {self.max_shards} shards (~{estimated_total//1000}K samples)")
-            else:
-                estimated_total = 10000  # Default estimate for progress display
-                print(f"🎯 Processing samples (estimated ~{estimated_total//1000}K samples)")
-            
-            try:
-                from tqdm import tqdm
-                progress_bar = tqdm(
-                    total=estimated_total,
-                    desc="Processing samples",
-                    unit="samples",
-                    bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]"
-                )
-            except ImportError:
-                progress_bar = None
-                print("💡 Install tqdm for better progress tracking: pip install tqdm")
+            estimated_total = 10000  # Default estimate for progress display
+            print(f"🎯 Processing samples (estimated ~{estimated_total//1000}K samples)")
+        
+        try:
+            from tqdm import tqdm
+            progress_bar = tqdm(
+                total=estimated_total,
+                desc="Processing samples",
+                unit="samples",
+                bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]"
+            )
+        except ImportError:
+            progress_bar = None
+            print("💡 Install tqdm for better progress tracking: pip install tqdm")
         
         for idx, sample in enumerate(dataset):
             processed_count += 1
@@ -234,86 +177,177 @@ class TreeOfLifeAdapter(BaseDatasetAdapter):
                     print(f"\n📊 Reached max_shards limit ({self.max_shards}), stopping at sample {processed_count}")
                     break
             
-            # Check sample limit (only if max_samples is not None)
+            # Check sample limit
             if self.max_samples is not None and len(samples) >= self.max_samples:
                 print(f"\n📊 Reached max_samples limit ({self.max_samples})")
                 break
             
-            # Extract sample information
+            # Extract sample information with robust error handling
             try:
-                # Determine streaming mode and call with appropriate parameter
-                is_streaming = hasattr(self, '_dataset_for_streaming') and self._dataset_for_streaming is not None
-                sample_info = self._process_hf_sample(sample, idx, streaming_mode=is_streaming)
+                sample_info = self._process_hf_sample(sample, idx, failed_images)
                 if sample_info:
                     samples.append(sample_info)
+                else:
+                    # Check if it was a catalog miss vs image error
+                    sample_id = sample.get('__key__', f'sample_{idx}')
+                    if not self._get_taxonomy_from_catalog(sample_id):
+                        catalog_misses += 1
                     
-                # Early exit for testing (should not trigger if max_samples is None)
-                # Remove or comment out the following block:
-                # if len(samples) >= (self.max_samples or 1000):
-                #     print(f"\n✅ Found enough samples for evaluation ({len(samples)}), stopping")
-                #     break
+                # Early exit if we have enough samples for testing
+                if len(samples) >= (self.max_samples or 1000):
+                    print(f"\n✅ Found enough samples for evaluation ({len(samples)}), stopping")
+                    break
                     
+            except KeyboardInterrupt:
+                print(f"\n⚠️ User interrupted at sample {processed_count}")
+                break
             except Exception as e:
-                if idx < 3:  # Show details for first few errors
+                if idx < 10:  # Show details for first few errors
+                    error_msg = f"⚠️ Critical error processing sample {idx}: {e}"
                     if progress_bar:
-                        progress_bar.write(f"⚠️ Error processing sample {idx}: {e}")
+                        progress_bar.write(error_msg)
                     else:
-                        print(f"⚠️ Error processing sample {idx}: {e}")
+                        print(error_msg)
+                    # For the first few errors, also print type of error
+                    print(f"   Error type: {type(e).__name__}")
+                    if hasattr(e, '__traceback__'):
+                        import traceback
+                        print(f"   Last few stack frames:")
+                        traceback.print_exc(limit=3)
                 continue
         
         # Close progress bar
         if progress_bar:
             progress_bar.close()
         
+        # Display loading statistics
+        elapsed_time = time.time() - start_time
+        print(f"\n📊 Loading Statistics:")
+        print(f"  ⏱️  Total time: {elapsed_time:.1f}s")
+        print(f"  📝 Samples processed: {processed_count:,}")
+        print(f"  ✅ Valid samples loaded: {len(samples):,}")
+        print(f"  🖼️  Image loading failures: {len(failed_images):,}")
+        print(f"  📋 Catalog lookup misses: {catalog_misses:,}")
+        
+        if failed_images:
+            print(f"\n⚠️  Image Loading Failures Summary:")
+            error_types = {}
+            for failure in failed_images[:20]:  # Show first 20 failures
+                reason = failure['reason']
+                error_type = reason.split(':')[0] if ':' in reason else reason
+                error_types[error_type] = error_types.get(error_type, 0) + 1
+            
+            for error_type, count in sorted(error_types.items(), key=lambda x: x[1], reverse=True):
+                print(f"    {error_type}: {count} failures")
+            
+            if len(failed_images) > 20:
+                print(f"    ... and {len(failed_images) - 20} more failures")
+        
         if not samples:
             print("⚠️ No valid samples found, this might indicate data format issues")
+            print("🔍 Please check:")
+            print("  - HuggingFace authentication (huggingface-cli login)")
+            print("  - Network connection")
+            print("  - Dataset availability")
             raise ValueError("No valid samples extracted from TreeOfLife-10M dataset")
         
-        # Calculate elapsed time only for non-streaming mode
-        if not self.streaming:
-            elapsed_time = time.time() - start_time
-            print(f"✅ Loaded {len(samples)} valid samples from TreeOfLife-10M in {elapsed_time:.1f}s")
-        else:
-            print(f"✅ Created metadata for {len(samples)} samples in streaming mode")
-            
+        print(f"\n✅ Successfully loaded {len(samples)} valid samples from TreeOfLife-10M")
         return self._filter_samples_by_class_count(samples)
             
-    def _process_hf_sample(self, sample: Dict[str, Any], idx: int, streaming_mode: bool = False) -> Optional[Dict[str, Any]]:
-        """Process a single sample from HuggingFace dataset with streaming support."""
+    def _process_hf_sample(self, sample: Dict[str, Any], idx: int, failed_images: List[Dict[str, str]]) -> Optional[Dict[str, Any]]:
+        """Process a single sample from HuggingFace dataset with robust error handling."""
         try:
-            # Extract sample ID first for taxonomy lookup
+            # Extract sample ID first for error tracking
             sample_id = sample.get('__key__', f'sample_{idx}')
-            
-            # Initialize image variable
-            image = None
-            
-            # For streaming mode, only validate that image exists, don't load it
-            if streaming_mode:
-                if sample.get('jpg') is None:
-                    return None
-                # Don't actually load the image in streaming mode
-            else:
-                # Non-streaming mode: get image reference
-                image = sample.get('jpg')  # TreeOfLife-10M uses 'jpg' field for images
-                if image is None:
-                    return None
-            
             sample_url = sample.get('__url__', '')
+            
+            # Extract image from TreeOfLife-10M format
+            image = sample.get('jpg')  # TreeOfLife-10M uses 'jpg' field for images
+            if image is None:
+                failed_images.append({
+                    'sample_id': sample_id,
+                    'reason': 'No jpg field found',
+                    'url': sample_url
+                })
+                return None
+            
+            # Validate and convert image with comprehensive error handling
+            try:
+                if not isinstance(image, Image.Image):
+                    # Try to convert to PIL Image if it's bytes or other format
+                    if hasattr(image, 'read'):
+                        import io
+                        image_data = image.read()
+                        image = Image.open(io.BytesIO(image_data))
+                    else:
+                        failed_images.append({
+                            'sample_id': sample_id,
+                            'reason': f'Invalid image type: {type(image)}',
+                            'url': sample_url
+                        })
+                        return None
+                
+                # Test that we can access basic image properties
+                _ = image.size  # This will fail if image is corrupted
+                _ = image.mode  # Another basic check
+                
+                # For corrupted TIFF files, try to convert to RGB mode
+                if image.mode not in ['RGB', 'L', 'RGBA']:
+                    try:
+                        image = image.convert('RGB')
+                    except Exception:
+                        failed_images.append({
+                            'sample_id': sample_id,
+                            'reason': f'Cannot convert image mode {image.mode} to RGB',
+                            'url': sample_url
+                        })
+                        return None
+                
+            except Exception as img_error:
+                error_type = type(img_error).__name__
+                error_msg = str(img_error)
+                failed_images.append({
+                    'sample_id': sample_id,
+                    'reason': f'{error_type}: {error_msg}',
+                    'url': sample_url
+                })
+                if idx < 5:  # Show details for first few image errors
+                    print(f"⚠️  Image loading error for {sample_id}: {error_type} - {error_msg}")
+                return None
+            
+            # Skip extremely large images that might cause memory issues
+            try:
+                width, height = image.size
+                if width * height > 50_000_000:  # 50MP limit
+                    failed_images.append({
+                        'sample_id': sample_id,
+                        'reason': f'Image too large: {width}x{height} pixels',
+                        'url': sample_url
+                    })
+                    if idx < 10:  # Only show warning for first few large images
+                        print(f"⚠️  Skipping very large image {sample_id}: {width}x{height} pixels")
+                    return None
+            except Exception:
+                # If we can't even get the size, the image is definitely corrupted
+                failed_images.append({
+                    'sample_id': sample_id,
+                    'reason': 'Cannot access image size - corrupted image',
+                    'url': sample_url
+                })
+                return None
             
             # Try to get real taxonomy from catalog database
             taxonomy = self._get_taxonomy_from_catalog(sample_id)
-            if not taxonomy:
-                # Error: cannot proceed without real taxonomic data
-                error_msg = (
-                    f"❌ Failed to retrieve taxonomic information for sample {sample_id}. "
-                    f"This indicates either:\n"
-                    f"  1. catalog.csv download failed\n"
-                    f"  2. catalog.csv is incomplete or corrupted\n"
-                    f"  3. Sample ID format has changed\n"
-                    f"TreeOfLife evaluation requires real taxonomic labels and cannot proceed with placeholder data."
-                )
-                print(error_msg)
-                raise ValueError(error_msg)
+            
+            if taxonomy:
+                # Only show first few successful catalog lookups
+                if idx < 3:
+                    print(f"✅ Found catalog entry for {sample_id}: {taxonomy.get('species', 'unknown')}")
+            else:
+                # For TreeOfLife, we need real taxonomic data
+                if idx < 10:  # Only show warning for first few missing entries
+                    print(f"⚠️  No catalog entry found for sample {sample_id}")
+                return None
             
             # Extract taxonomic label at specified level
             taxonomic_label = self._get_taxonomic_label_from_dict(taxonomy)
@@ -323,41 +357,26 @@ class TreeOfLifeAdapter(BaseDatasetAdapter):
             # Skip if excluding partial labels and sample doesn't have full taxonomy
             if self.exclude_partial_labels and not self._has_full_taxonomy_from_dict(taxonomy):
                 return None
-            
-            if streaming_mode:
-                # Streaming mode: Don't store image data (即用即扔)
-                sample_info = {
-                    'index': idx,
-                    'label': taxonomic_label,  # Use 'label' for consistency
-                    'taxonomic_label': taxonomic_label,  # Keep for backward compatibility
-                    'common_name': taxonomy.get('common', ''),
-                    'scientific_name': taxonomy.get('species', ''),
-                    'treeoflife_id': sample_id,
-                    'metadata': taxonomy
-                    # No 'image' field - will be loaded on-demand
-                }
-            else:
-                # Non-streaming mode: Include image data (image was defined above)
-                sample_info = {
-                    'index': idx,
-                    'label': taxonomic_label,  # Use 'label' for consistency
-                    'taxonomic_label': taxonomic_label,  # Keep for backward compatibility
-                    'common_name': taxonomy.get('common', ''),
-                    'scientific_name': taxonomy.get('species', ''),
-                    'image': image,  # image is defined in non-streaming mode
-                    'treeoflife_id': sample_id,
-                    'metadata': taxonomy
-                }
+                
+            sample_info = {
+                'index': idx,
+                'taxonomic_label': taxonomic_label,
+                'common_name': taxonomy.get('common', ''),
+                'scientific_name': taxonomy.get('species', ''),
+                'image': image,
+                'treeoflife_id': sample_id,
+                'metadata': taxonomy
+            }
             
             return sample_info
             
         except Exception as e:
-            if idx < 3:  # Show details for first few errors only
+            if idx < 10:  # Show details for first few errors only
                 print(f"⚠️ Error processing sample {idx}: {e}")
             return None
 
     def _get_taxonomic_label_from_dict(self, taxonomy: Dict[str, str]) -> Optional[str]:
-        """Extract taxonomic label at the specified level from taxonomy dict, skipping confusor/unknown/hybrid labels."""
+        """Extract taxonomic label at the specified level from taxonomy dict."""
         level_map = {
             'kingdom': 'kingdom',
             'phylum': 'phylum', 
@@ -374,20 +393,16 @@ class TreeOfLifeAdapter(BaseDatasetAdapter):
         field_name = level_map[self.taxonomic_level]
         label = str(taxonomy.get(field_name, '')).strip()
         
-        # Return None if label is empty or indicates unknown/confusor/hybrid
-        bad_keywords = [
-            '', 'unknown', 'sp.', 'n/a', 'nan', 'none', 'confusor', 'confusa', 'confusum', 'confus', 'confuso'
-        ]
-        label_lower = label.lower()
-        if label_lower in bad_keywords:
+        # Return None if label is empty or indicates unknown species
+        if not label or label.lower() in ['', 'unknown', 'sp.', 'n/a', 'nan', 'none']:
             return None
-        # Also skip if label contains 'sp.' (uncertain species) or ' x ' (hybrid)
-        if 'sp.' in label_lower or ' x ' in label_lower:
-            return None
+        
         # Clean up species labels that have special indicators
         if self.taxonomic_level == 'species' and ('sp.' in label or 'x ' in label):
+            # Handle special cases like "sp. ___" or hybrid indicators
             if 'sp.' in label and 'ex' not in label:
                 return None  # Skip uncertain species
+        
         return label
     
     def _has_full_taxonomy_from_dict(self, taxonomy: Dict[str, str]) -> bool:
@@ -438,65 +453,66 @@ class TreeOfLifeAdapter(BaseDatasetAdapter):
         return classes
     
     def __getitem__(self, index: int) -> Tuple[torch.Tensor, int]:
-        """Get a sample by index with streaming support for lazy loading."""
+        """Get a sample by index with lazy loading and robust image handling."""
         sample_info = self.data[index]
         
-        # Check if we're in streaming mode
-        if hasattr(self, '_dataset_for_streaming') and self._dataset_for_streaming is not None:
-            # Streaming mode: load image on-demand (即用即扔)
-            image = self._load_image_on_demand(index)
-        else:
-            # Non-streaming mode: image already loaded
-            image = sample_info['image']
-            if not isinstance(image, Image.Image):
-                raise ValueError(f"Expected PIL Image, got {type(image)}")
+        # Get image (already loaded by HuggingFace)
+        image = sample_info['image']
+        if not isinstance(image, Image.Image):
+            raise ValueError(f"Expected PIL Image, got {type(image)} for sample {sample_info.get('treeoflife_id', index)}")
+        
+        # Safety check for image size and integrity
+        try:
+            width, height = image.size
+            # Additional integrity check
+            _ = image.mode
+            
+            if width * height > 50_000_000:  # 50MP limit
+                # Resize very large images
+                max_size = 2048
+                if width > max_size or height > max_size:
+                    ratio = min(max_size / width, max_size / height)
+                    new_width = int(width * ratio)
+                    new_height = int(height * ratio)
+                    image = image.resize((new_width, new_height), Image.Resampling.LANCZOS)
+                    
+        except Exception as e:
+            print(f"⚠️ Error accessing image properties at index {index} ({sample_info.get('treeoflife_id', 'unknown')}): {e}")
+            # Try to create a small placeholder image
+            image = Image.new('RGB', (224, 224), (128, 128, 128))
         
         # Apply transform if specified
         if self.transform:
-            image = self.transform(image)
+            try:
+                image = self.transform(image)
+            except Exception as e:
+                print(f"⚠️ Error applying transform at index {index} ({sample_info.get('treeoflife_id', 'unknown')}): {e}")
+                # Fallback to basic tensor conversion
+                import torchvision.transforms as transforms
+                to_tensor = transforms.ToTensor()
+                try:
+                    image = to_tensor(image)
+                except Exception as e2:
+                    print(f"⚠️ Error in fallback tensor conversion: {e2}")
+                    # Create a placeholder tensor
+                    import torch
+                    image = torch.zeros(3, 224, 224)
         else:
             # Convert PIL image to tensor if no transform is provided
             import torchvision.transforms as transforms
             to_tensor = transforms.ToTensor()
-            image = to_tensor(image)
+            try:
+                image = to_tensor(image)
+            except Exception as e:
+                print(f"⚠️ Error converting to tensor at index {index} ({sample_info.get('treeoflife_id', 'unknown')}): {e}")
+                # Create a placeholder tensor
+                import torch
+                image = torch.zeros(3, 224, 224)
         
         # Get label
-        label = self.class_to_idx[sample_info['label']]  # Use 'label' instead of 'taxonomic_label'
+        label = self.class_to_idx[sample_info['taxonomic_label']]
         
         return image, label
-
-    def _load_image_on_demand(self, index: int):
-        """Load image on-demand for streaming mode to save memory (即用即扔)."""
-        from PIL import Image
-        
-        try:
-            if self._dataset_for_streaming is None:
-                raise RuntimeError("Streaming dataset not available")
-            
-            sample_info = self.data[index]
-            target_idx = sample_info['image_path']  # Original index in the dataset
-            
-            # For streaming datasets, we need to iterate to the specific index
-            for i, sample in enumerate(self._dataset_for_streaming):
-                if i == target_idx:
-                    image = sample.get('jpg')  # TreeOfLife-10M uses 'jpg' field
-                    if image is None:
-                        raise ValueError("No image found in sample")
-                    
-                    if not isinstance(image, Image.Image):
-                        raise ValueError(f"Expected PIL Image, got {type(image)}")
-                    
-                    return image
-                elif i > target_idx:
-                    break
-            
-            # If we can't find the image, return a placeholder
-            print(f"Warning: Could not load image at index {index}, using placeholder")
-            return Image.new('RGB', (224, 224), color='gray')
-            
-        except Exception as e:
-            print(f"Error loading image at index {index}: {e}")
-            return Image.new('RGB', (224, 224), color='gray')
     
     def get_templates(self) -> List[str]:
         """Get text templates for TreeOfLife-10M dataset."""
@@ -505,26 +521,22 @@ class TreeOfLifeAdapter(BaseDatasetAdapter):
         return DatasetTemplates.get_templates()
     
     def _init_catalog_lazy_reader(self, catalog_path: str):
-        """Initialize ultra-lightweight catalog reader using pandas DataFrame for ultra-fast lookup."""
+        """Initialize ultra-lightweight catalog reader using text-based indexing."""
         self.catalog_path = catalog_path
         self.catalog_cache = {}  # Minimal cache for recently accessed entries
-        self.cache_size = 10000  # Increase cache size for better performance
-
+        self.cache_size = 1000  # Much smaller cache
+        
         # Create a simple text index if it doesn't exist
         index_path = catalog_path.replace('.csv', '_simple_index.txt')
+        
         if not os.path.exists(index_path) or os.path.getmtime(index_path) < os.path.getmtime(catalog_path):
             print("🔧 Creating ultra-lightweight text index...")
             self._create_simple_index(catalog_path, index_path)
         else:
             print("✅ Using existing text index")
+        
         self.index_path = index_path
         print(f"✅ Ultra-lightweight catalog reader initialized")
-
-        # Load the catalog into a pandas DataFrame for fast lookups
-        print("🚀 Loading full catalog.csv into pandas DataFrame (this may take 1-2 minutes)...")
-        import pandas as pd
-        self._catalog_df = pd.read_csv(catalog_path, index_col='treeoflife_id', low_memory=False)
-        print(f"✅ Loaded catalog.csv into DataFrame: {self._catalog_df.shape[0]:,} entries.")
     
     def _create_simple_index(self, catalog_path: str, index_path: str):
         """Create minimal index mapping sample_id to line number."""
@@ -580,70 +592,79 @@ class TreeOfLifeAdapter(BaseDatasetAdapter):
                 print(f"✅ Index complete: {entries_indexed:,} entries")
     
     def _get_taxonomy_from_catalog(self, sample_id: str) -> Optional[Dict[str, str]]:
-        """Ultra-fast taxonomy lookup using pandas DataFrame if available, else fallback to index dict."""
+        """Ultra-fast taxonomy lookup using text-based index."""
         # Check tiny cache first
         if sample_id in self.catalog_cache:
             return self.catalog_cache[sample_id]
-        # 优先用 pandas DataFrame 查找
-        if hasattr(self, '_catalog_df'):
-            try:
-                row = self._catalog_df.loc[sample_id]
-                taxonomy = {
-                    'kingdom': str(row.get('kingdom', '')),
-                    'phylum': str(row.get('phylum', '')),
-                    'class': str(row.get('class', '')),
-                    'order': str(row.get('order', '')),
-                    'family': str(row.get('family', '')),
-                    'genus': str(row.get('genus', '')),
-                    'species': str(row.get('species', '')),
-                    'common': str(row.get('common', '')),
-                    'split': str(row.get('split', 'train'))
-                }
-                # Add to cache
-                if len(self.catalog_cache) >= self.cache_size:
-                    keys_to_remove = list(self.catalog_cache.keys())[:self.cache_size//2]
-                    for key in keys_to_remove:
-                        del self.catalog_cache[key]
-                self.catalog_cache[sample_id] = taxonomy
-                return taxonomy
-            except KeyError:
-                return None
+        
+        if not hasattr(self, 'index_path') or not os.path.exists(self.index_path):
+            return None
+        
+        try:
+            # Search index file for line number
+            target_line = None
+            with open(self.index_path, 'r') as index_file:
+                for line in index_file:
+                    if line.startswith(f"{sample_id}:"):
+                        target_line = int(line.split(':')[1].strip())
+                        break
             
-        # If DataFrame not available, use ultra-lightweight text index
-        if hasattr(self, '_catalog_index_dict') and hasattr(self, '_parse_catalog_line'):
-            target_line = self._catalog_index_dict.get(sample_id)
             if target_line is None:
                 return None
-            try:
-                with open(self.catalog_path, 'r', encoding='utf-8') as csv_file:
-                    for current_line_num, line in enumerate(csv_file, 1):
-                        if current_line_num == target_line:
-                            taxonomy = TreeOfLifeAdapter._parse_catalog_line(self, line)
-                            if len(self.catalog_cache) >= self.cache_size:
-                                keys_to_remove = list(self.catalog_cache.keys())[:self.cache_size//2]
-                                for key in keys_to_remove:
-                                    del self.catalog_cache[key]
-                            self.catalog_cache[sample_id] = taxonomy
-                            return taxonomy
-                return None
-            except Exception as e:
-                print(f"⚠️  Fast lookup error for {sample_id}: {e}")
-                return None
-        return None
+            
+            # Read specific line from catalog
+            with open(self.catalog_path, 'r', encoding='utf-8') as csv_file:
+                for current_line_num, line in enumerate(csv_file, 1):
+                    if current_line_num == target_line:
+                        # Parse the line manually
+                        taxonomy = self._parse_catalog_line(line)
+                        
+                        # Add to small cache
+                        if len(self.catalog_cache) >= self.cache_size:
+                            # Remove half the cache when full
+                            keys_to_remove = list(self.catalog_cache.keys())[:self.cache_size//2]
+                            for key in keys_to_remove:
+                                del self.catalog_cache[key]
+                        
+                        self.catalog_cache[sample_id] = taxonomy
+                        return taxonomy
+                        
+            return None
+            
+        except Exception as e:
+            print(f"⚠️  Fast lookup error for {sample_id}: {e}")
+            return None
     
-    def _parse_catalog_row(self, row: pd.Series) -> Dict[str, str]:
-        """Parse a pandas Series row to extract taxonomy fields."""
+    def _parse_catalog_line(self, line: str) -> Dict[str, str]:
+        """Parse a CSV line manually to extract taxonomy fields."""
+        # Simple CSV parsing (handles basic quoting)
+        parts = []
+        current_part = ""
+        in_quotes = False
+        
+        for char in line.strip():
+            if char == '"':
+                in_quotes = not in_quotes
+            elif char == ',' and not in_quotes:
+                parts.append(current_part.strip('"'))
+                current_part = ""
+                continue
+            current_part += char
+        
+        if current_part:
+            parts.append(current_part.strip('"'))
+        
         # Map to taxonomy fields (adjust indices based on catalog structure)
         # Typical order: split,treeoflife_id,eol_content_id,eol_page_id,bioscan_part,bioscan_filename,
         #                inat21_filename,inat21_cls_name,inat21_cls_num,kingdom,phylum,class,order,family,genus,species,common
         return {
-            'kingdom': row['kingdom'] if 'kingdom' in row else '',
-            'phylum': row['phylum'] if 'phylum' in row else '',
-            'class': row['class'] if 'class' in row else '',
-            'order': row['order'] if 'order' in row else '',
-            'family': row['family'] if 'family' in row else '',
-            'genus': row['genus'] if 'genus' in row else '',
-            'species': row['species'] if 'species' in row else '',
-            'common': row['common'] if 'common' in row else '',
-            'split': row['split'] if 'split' in row else 'train'
+            'kingdom': parts[9] if len(parts) > 9 else '',
+            'phylum': parts[10] if len(parts) > 10 else '',
+            'class': parts[11] if len(parts) > 11 else '',
+            'order': parts[12] if len(parts) > 12 else '',
+            'family': parts[13] if len(parts) > 13 else '',
+            'genus': parts[14] if len(parts) > 14 else '',
+            'species': parts[15] if len(parts) > 15 else '',
+            'common': parts[16] if len(parts) > 16 else '',
+            'split': parts[0] if len(parts) > 0 else 'train'
         }
