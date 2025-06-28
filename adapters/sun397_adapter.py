@@ -24,11 +24,12 @@ class SUN397Adapter(BaseDatasetAdapter):
         else:
             return self._load_data_tensorflow(**kwargs)
     
-    def _load_data_huggingface(self, test_split_ratio=0.2, **kwargs):
+    def _load_data_huggingface(self, test_split_ratio=0.2, streaming=False, **kwargs):
         """Load SUN397 data using Hugging Face Datasets.
         
         Args:
             test_split_ratio: Ratio to split train data into train/test (default: 0.2)
+            streaming: Enable streaming mode for Hugging Face datasets (default: False)
         """
         try:
             from datasets import load_dataset
@@ -44,64 +45,54 @@ class SUN397Adapter(BaseDatasetAdapter):
             
             # Handle different split requests
             if self.split == 'test':
-                # Load full train dataset and split it
                 print("Note: SUN397 only has 'train' split. Creating test split from training data...")
-                dataset = load_dataset("1aurent/SUN397", split='train', cache_dir=self.root_path)
+                dataset = load_dataset("1aurent/SUN397", split='train', cache_dir=self.root_path, streaming=streaming)
                 
-                # Split the dataset
-                train_test_split = dataset.train_test_split(test_size=test_split_ratio, shuffle=True, seed=42)
-                dataset = train_test_split['test']  # Use test portion
-                print(f"Using test split ({len(dataset)} samples) from training data")
-                
-            elif self.split == 'train':
-                # Load full train dataset
-                dataset = load_dataset("1aurent/SUN397", split='train', cache_dir=self.root_path)
-                
-                # Optionally split to keep only training portion
-                if test_split_ratio > 0:
+                if not streaming:
                     train_test_split = dataset.train_test_split(test_size=test_split_ratio, shuffle=True, seed=42)
-                    dataset = train_test_split['train']  # Use train portion
+                    dataset = train_test_split['test']
+                    print(f"Using test split ({len(dataset)} samples) from training data")
+                else:
+                    print("Streaming mode enabled, test split will be handled dynamically.")
+            elif self.split == 'train':
+                dataset = load_dataset("1aurent/SUN397", split='train', cache_dir=self.root_path, streaming=streaming)
+                
+                if not streaming and test_split_ratio > 0:
+                    train_test_split = dataset.train_test_split(test_size=test_split_ratio, shuffle=True, seed=42)
+                    dataset = train_test_split['train']
                     print(f"Using train split ({len(dataset)} samples) from training data")
                 else:
-                    print(f"Using full dataset ({len(dataset)} samples)")
+                    print(f"Using full dataset ({'streaming mode' if streaming else len(dataset)} samples)")
             else:
-                # Fallback: use available split
                 print(f"Warning: Split '{self.split}' not available. Using 'train' split.")
-                dataset = load_dataset("1aurent/SUN397", split='train', cache_dir=self.root_path)
-              # Apply max_samples limit if specified
+                dataset = load_dataset("1aurent/SUN397", split='train', cache_dir=self.root_path, streaming=streaming)
+
             max_samples = kwargs.get('max_samples', None)
-            dataset_length = len(dataset) if hasattr(dataset, '__len__') else 87003
-            
-            # Only apply max_samples limit if not None
-            if max_samples is not None and max_samples < dataset_length:
-                print(f"Limited to {max_samples} samples for testing")
-                actual_length = max_samples
+            if not streaming:
+                dataset_length = len(dataset) if hasattr(dataset, '__len__') else 87003
+                if max_samples is not None and max_samples < dataset_length:
+                    print(f"Limited to {max_samples} samples for testing")
+                    actual_length = max_samples
+                else:
+                    print(f"Using full dataset ({dataset_length} samples)")
+                    actual_length = dataset_length
+
+                self._hf_dataset = dataset
+                data = []
+                print(f"Creating metadata for {actual_length} samples...")
+                for idx in range(actual_length):
+                    data.append({
+                        'image_path': idx,
+                        'label': None,
+                    })
+                    if (idx + 1) % 10000 == 0:
+                        print(f"Created metadata for {idx + 1} samples...")
+                print(f"✓ Successfully created metadata for {len(data)} samples")
+                return data
             else:
-                print(f"Using full dataset ({dataset_length} samples)")
-                actual_length = dataset_length
-            
-            # Store the dataset reference for lazy loading
-            self._hf_dataset = dataset
-            
-            # Create lightweight data structure WITHOUT loading actual images
-            data = []
-            print(f"Creating metadata for {actual_length} samples...")
-            
-            # Only create metadata entries - don't load images yet
-            for idx in range(actual_length):
-                # We'll get the label when needed in __getitem__
-                data.append({
-                    'image_path': idx,  # Index into the HF dataset
-                    'label': None,  # Will be loaded on demand
-                })
-                
-                # Show progress for large datasets
-                if (idx + 1) % 10000 == 0:
-                    print(f"Created metadata for {idx + 1} samples...")
-            
-            print(f"✓ Successfully created metadata for {len(data)} samples")
-            return data
-            
+                print("Streaming mode enabled, metadata creation skipped.")
+                self._hf_dataset = dataset
+                return []
         except Exception as e:
             raise RuntimeError(
                 f"Failed to load SUN397 dataset from Hugging Face: {str(e)}\n"

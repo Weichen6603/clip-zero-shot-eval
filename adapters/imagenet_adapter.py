@@ -15,19 +15,27 @@ from base_dataset import BaseDatasetAdapter
 class ImageNetAdapter(BaseDatasetAdapter):
     """Adapter for ImageNet dataset using Hugging Face mlx-vision/imagenet-1k."""
 
-    def __init__(self, root_path: str, transform=None, split: str = 'validation', **kwargs):
+    def __init__(self, root_path: str, transform=None, split: str = 'validation', 
+                 streaming: bool = True, **kwargs):
         """Initialize ImageNet adapter.
         
         Args:
             root_path: Root directory to cache the dataset (will use as cache_dir)
             transform: Image transformations to apply
             split: Dataset split to use ('validation' for ImageNet-1K)
+            streaming: Whether to use streaming mode (True) or download full dataset (False)
             **kwargs: Additional arguments
         """
         # Set cache directory to the specified path
         self.cache_dir = root_path
         self.dataset = None  # Will be loaded in _load_data
         self.max_samples = kwargs.get("max_samples", None)
+        
+        # streaming config: explicit arg > kwargs > default True
+        if 'streaming' in kwargs:
+            self.streaming = kwargs['streaming']
+        else:
+            self.streaming = streaming
 
         super().__init__(root_path, transform, split, **kwargs)
 
@@ -44,6 +52,7 @@ class ImageNetAdapter(BaseDatasetAdapter):
         print(f"Loading ImageNet-1K dataset from Hugging Face...")
         print(f"Cache directory: {self.cache_dir}")
         print(f"Split: {self.split}")
+        print(f"Streaming mode: {self.streaming}")
         
         # Create cache directory if it doesn't exist
         import os
@@ -55,14 +64,19 @@ class ImageNetAdapter(BaseDatasetAdapter):
             self.dataset = load_dataset(
                 "imagenet-1k", 
                 split=self.split,
+                streaming=self.streaming,  # Use streaming parameter from config
                 cache_dir=self.cache_dir,
                 trust_remote_code=True  # Required for custom dataset code
             )
             print(f"Successfully loaded dataset")
             print(f"Dataset info: {self.dataset}")
+            print(f"Dataset type: {type(self.dataset)}")
             # Only print features if dataset is not a dict (i.e., is a Dataset or IterableDataset)
             if not isinstance(self.dataset, dict):
-                print(f"Dataset features: {self.dataset.features}")
+                if hasattr(self.dataset, 'features'):
+                    print(f"Dataset features: {self.dataset.features}")
+                else:
+                    print("Dataset features: Not available (streaming mode)")
             else:
                 print(f"Dataset is a dict type ({type(self.dataset)}), skipping features print.")
         except Exception as e:
@@ -81,7 +95,19 @@ class ImageNetAdapter(BaseDatasetAdapter):
         except ImportError:
             print("tqdm not installed. Install it with: pip install tqdm")
             tqdm = lambda x, **kwargs: x  # fallback: no progress bar
+        
         total = self.max_samples if self.max_samples is not None else None
+        # Only try to get length for non-streaming datasets that support it
+        if not self.streaming:
+            try:
+                # Import Dataset type to check instance type
+                from datasets import Dataset
+                if isinstance(self.dataset, Dataset):
+                    dataset_len = len(self.dataset)
+                    total = min(dataset_len, self.max_samples or dataset_len)
+            except:
+                pass  # Use max_samples as total
+        
         for idx, sample in enumerate(tqdm(self.dataset, total=total, desc="Processing samples")):
             if self.max_samples is not None and idx >= self.max_samples:
                 break
@@ -100,22 +126,31 @@ class ImageNetAdapter(BaseDatasetAdapter):
             except Exception as e:
                 synset = f"synset_{sample['label']}"
             
-            # Save image temporarily to match base class interface
-            import tempfile
-            import os
-            temp_dir = os.path.join(self.cache_dir, "temp_images")
-            os.makedirs(temp_dir, exist_ok=True)
-            temp_path = os.path.join(temp_dir, f"img_{idx}.jpg")
-            
-            # Save PIL image to temporary file
-            sample['image'].save(temp_path, "JPEG")
-            
-            data.append({
-                'image_path': temp_path,  # Path to temporary image file for base class
-                'label': sample['label'],  # This is the class index (0-999)
-                'synset': synset,  # This is the synset string (e.g., 'n01440764')
-                'image_obj': sample['image']  # Keep original PIL object for reference
-            })
+            if self.streaming:
+                # In streaming mode, keep PIL image object directly to avoid file I/O
+                data.append({
+                    'image_path': idx,  # Use index as identifier
+                    'label': sample['label'],  # This is the class index (0-999)
+                    'synset': synset,  # This is the synset string (e.g., 'n01440764')
+                    'image_obj': sample['image']  # Keep original PIL object
+                })
+            else:
+                # In offline mode, save image temporarily to match base class interface
+                import tempfile
+                import os
+                temp_dir = os.path.join(self.cache_dir, "temp_images")
+                os.makedirs(temp_dir, exist_ok=True)
+                temp_path = os.path.join(temp_dir, f"img_{idx}.jpg")
+                
+                # Save PIL image to temporary file
+                sample['image'].save(temp_path, "JPEG")
+                
+                data.append({
+                    'image_path': temp_path,  # Path to temporary image file for base class
+                    'label': sample['label'],  # This is the class index (0-999)
+                    'synset': synset,  # This is the synset string (e.g., 'n01440764')
+                    'image_obj': sample['image']  # Keep original PIL object for reference
+                })
         
         print(f"Successfully processed {len(data)} samples")
         
@@ -153,3 +188,34 @@ class ImageNetAdapter(BaseDatasetAdapter):
         sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         from dataset_adapters import DatasetTemplates
         return DatasetTemplates.get_templates()
+
+    def __getitem__(self, index: int) -> Tuple[torch.Tensor, int]:
+        """Get a sample by index, handling both streaming and offline modes."""
+        item = self.data[index]
+        
+        if self.streaming:
+            # In streaming mode, use the PIL image object directly
+            image = item['image_obj']
+        else:
+            # In offline mode, load from temporary file path
+            image_path = item['image_path']
+            if 'image_obj' in item:
+                # Use cached PIL object if available
+                image = item['image_obj']
+            else:
+                # Load from file path
+                image = Image.open(image_path).convert('RGB')
+        
+        # Apply transforms
+        if self.transform:
+            image = self.transform(image)
+        else:
+            # Convert PIL image to tensor if no transform is provided
+            import torchvision.transforms as transforms
+            to_tensor = transforms.ToTensor()
+            image = to_tensor(image)
+        
+        # Get label
+        label = item['label']
+        
+        return image, label
