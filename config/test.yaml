@@ -29,6 +29,7 @@ datasets:
   # TreeOfLife-10M using official train_small split (953K images)
   - name: "TreeOfLife-10M-TrainSmall"
     type: "treeoflife"
+    streaming: true  # Set to true to enable HuggingFace streaming mode
     root_path: "/home/serikaphb/working-space/code/clip-zero-shot-eval/data/treeoflife"  # Cache directory for HuggingFace datasets
     output_dir: "./results/treeoflife_lightweight"
     split: "train_small"      # Use official lightweight split instead of limiting shards
