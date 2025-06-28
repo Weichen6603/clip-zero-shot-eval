@@ -17,14 +17,14 @@ save_results: false
 # Dataset configurations
 datasets:
   # ImageNet dataset from Hugging Face (official imagenet-1k)
-  - name: "ImageNet-1K"
-    type: "imagenet"
-    streaming: true  # Set to true to enable HuggingFace streaming mode
-    root_path: "./data/imagenet"  # Cache directory on Windows D: drive via WSL mount
-    output_dir: "./results/imagenet_1k_evaluation"
-    save_predictions: false
-    split: "validation"  # Use validation split (50K images)
-    # max_samples: 1000  # Uncomment to limit for quick tests
+  # - name: "ImageNet-1K"
+  #   type: "imagenet"
+  #   streaming: true  # Set to true to enable HuggingFace streaming mode
+  #   root_path: "./data/imagenet"  # Cache directory on Windows D: drive via WSL mount
+  #   output_dir: "./results/imagenet_1k_evaluation"
+  #   save_predictions: false
+  #   split: "validation"  # Use validation split (50K images)
+  #   # max_samples: 1000  # Uncomment to limit for quick tests
 
   # TreeOfLife-10M using official train_small split (953K images)
   - name: "TreeOfLife-10M-TrainSmall"
