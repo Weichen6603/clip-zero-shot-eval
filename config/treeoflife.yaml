@@ -39,7 +39,6 @@ datasets:
     # train_small is already a curated lightweight subset
     max_samples: null                 # Use all train_small samples (~953K images)
     min_images_per_class: 1           # Minimum images per taxonomic class to include
-    use_precomputed_embeddings: true  # Use BioCLIP text embeddings when available
     
     # Alternative testing configurations:
     

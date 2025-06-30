@@ -33,7 +33,6 @@ datasets:
     # max_shards: null                   # Use all 73 shards (online/download complete dataset)
     # max_samples: null                  # Use all ~10M+ samples (no limit)
     min_images_per_class: 5              # Minimum images per taxonomic class to include (higher for better quality)
-    use_precomputed_embeddings: true     # Use BioCLIP text embeddings when available
     
     # Alternative configurations for different research needs:
     
