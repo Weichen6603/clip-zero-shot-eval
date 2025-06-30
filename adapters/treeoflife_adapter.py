@@ -340,39 +340,57 @@ class TreeOfLifeAdapter(BaseDatasetAdapter):
         batch_size = 100
         sample_batch = []
         
-        for idx, sample in enumerate(dataset):
-            processed_count += 1
-            sample_batch.append((idx, sample))
-            
-            # Process in batches
-            if len(sample_batch) >= batch_size:
-                valid_samples = self._process_sample_batch(sample_batch, failed_images, catalog_misses)
-                samples.extend(valid_samples)
-                sample_batch = []
-                
-                # Update progress
-                if progress_bar:
-                    progress_bar.update(batch_size)
-                    if processed_count % 1000 == 0:
-                        progress_bar.set_description(f"Processing samples (found {len(samples)} valid)")
-            
-            # Check limits
-            if self.max_shards is not None:
-                estimated_shard = processed_count // 140000
-                if estimated_shard >= self.max_shards:
-                    print(f"\n📊 Reached max_shards limit ({self.max_shards}), stopping at sample {processed_count}")
-                    break
-            
-            if self.max_samples is not None and len(samples) >= self.max_samples:
-                print(f"\n📊 Reached max_samples limit ({self.max_samples})")
-                break
-        
-        # Process remaining batch
-        if sample_batch:
-            valid_samples = self._process_sample_batch(sample_batch, failed_images, catalog_misses)
-            samples.extend(valid_samples)
-            if progress_bar:
-                progress_bar.update(len(sample_batch))
+        # Main loop for processing samples
+        with tqdm(total=target_samples, desc="Processing samples", unit="sample") as pbar:
+            for sample in dataset:
+                try:
+                    # OPTIMIZATION: Use pre-filtered sample IDs for ultra-fast filtering
+                    if self.split_sample_ids and sample['treeoflife_id'] not in self.split_sample_ids:
+                        pbar.update(1)
+                        continue
+
+                    # Get metadata from memory catalog if available
+                    metadata = self.memory_catalog.get(sample['treeoflife_id'])
+                    if metadata is None:
+                        catalog_misses += 1
+                        continue  # Skip samples not in catalog
+
+                    # Extract taxonomic label
+                    label = metadata.get(self.taxonomic_level)
+                    if not label:
+                        continue
+
+                    # Store compressed image bytes to save memory
+                    image_bytes = self._compress_image(sample['image'])
+                    if image_bytes is None:
+                        failed_images.append(sample['treeoflife_id'])
+                        continue
+                    
+                    processed_sample = {
+                        "index": processed_count,
+                        "taxonomic_label": label,
+                        "treeoflife_id": sample['treeoflife_id'],
+                        "image_bytes": image_bytes,  # Store compressed bytes
+                        "metadata": metadata
+                    }
+                    samples.append(processed_sample)
+                    pbar.set_postfix(found=len(samples), failed=len(failed_images), refresh=True)
+
+                except (UnidentifiedImageError, OSError, IOError) as e:
+                    sample_id = sample.get('treeoflife_id', 'Unknown ID')
+                    print(f"\n⚠️ Corrupt image skipped during initial loading (ID: {sample_id}). Error: {e}")
+                    failed_images.append(sample_id)
+                    continue # Skip to the next sample
+                except Exception as e:
+                    sample_id = sample.get('treeoflife_id', 'Unknown ID')
+                    print(f"\nUnexpected error processing sample ID {sample_id}: {e}")
+                    traceback.print_exc()
+                    failed_images.append(sample_id)
+                    continue
+
+
+                processed_count += 1
+                pbar.update(1)
         
         # Close progress bar
         if progress_bar:
