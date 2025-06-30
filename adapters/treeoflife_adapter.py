@@ -10,7 +10,7 @@ import io
 import traceback
 from typing import List, Dict, Any, Optional, Tuple
 from collections import defaultdict, Counter
-from PIL import Image
+from PIL import Image, UnidentifiedImageError
 import torch
 import pandas as pd
 import torchvision.transforms as transforms
@@ -18,6 +18,7 @@ import torchvision.transforms as transforms
 # Configure PIL to handle large images and suppress warnings
 Image.MAX_IMAGE_PIXELS = None  # Remove size limit
 warnings.filterwarnings("ignore", category=Image.DecompressionBombWarning)
+warnings.filterwarnings("ignore", message=".*TIFF.*")  # Ignore TIFF warnings
 
 # Add parent directory to path for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -278,23 +279,32 @@ class TreeOfLifeAdapter(BaseDatasetAdapter):
                     # Try to convert to PIL Image if it's bytes or other format
                     if hasattr(image, 'read'):
                         image_bytes = image.read()
-                        # Validate that we can decode it
-                        test_image = Image.open(io.BytesIO(image_bytes))
-                        _ = test_image.size  # Quick validation
-                        
-                        # Skip extremely large images that might cause memory issues
-                        width, height = test_image.size
-                        if width * height > 100_000_000:  # 100MP limit for initial filtering
+                        # Validate that we can decode it with robust error handling
+                        try:
+                            test_image = Image.open(io.BytesIO(image_bytes))
+                            _ = test_image.size  # Quick validation
+                            
+                            # Skip extremely large images that might cause memory issues
+                            width, height = test_image.size
+                            if width * height > 100_000_000:  # 100MP limit for initial filtering
+                                failed_images.append({
+                                    'sample_id': sample_id,
+                                    'reason': f'Image too large: {width}x{height} pixels',
+                                    'url': sample_url
+                                })
+                                if idx < 10:
+                                    print(f"⚠️  Skipping very large image {sample_id}: {width}x{height} pixels")
+                                return None
+                            
+                            del test_image  # Immediately release validation image
+                        except (UnidentifiedImageError, OSError, IOError) as e:
+                            # Handle unidentified image format errors
                             failed_images.append({
                                 'sample_id': sample_id,
-                                'reason': f'Image too large: {width}x{height} pixels',
+                                'reason': f'Invalid image format: {str(e)}',
                                 'url': sample_url
                             })
-                            if idx < 10:
-                                print(f"⚠️  Skipping very large image {sample_id}: {width}x{height} pixels")
                             return None
-                        
-                        del test_image  # Immediately release validation image
                     else:
                         failed_images.append({
                             'sample_id': sample_id,
@@ -317,6 +327,14 @@ class TreeOfLifeAdapter(BaseDatasetAdapter):
                     
                     bytes_io = io.BytesIO()
                     # Store as JPEG with good quality but compressed
+                    # Handle different image modes properly
+                    if image.mode in ['RGBA', 'LA', 'P']:
+                        # Convert images with transparency or palette to RGB
+                        image = image.convert('RGB')
+                    elif image.mode not in ['RGB', 'L']:
+                        # Convert any other exotic modes to RGB
+                        image = image.convert('RGB')
+                    
                     image.save(bytes_io, format='JPEG', quality=85, optimize=True)
                     image_bytes = bytes_io.getvalue()
                     del bytes_io
@@ -553,8 +571,13 @@ class TreeOfLifeAdapter(BaseDatasetAdapter):
                 if image_bytes is None:
                     return None
                 
-                # Decode from compressed bytes - this is when image actually enters memory
-                image = Image.open(io.BytesIO(image_bytes))
+                # Decode from compressed bytes with robust error handling
+                try:
+                    image = Image.open(io.BytesIO(image_bytes))
+                except (UnidentifiedImageError, OSError, IOError) as e:
+                    # Handle specific image format errors
+                    print(f"⚠️ Failed to decode image: {e}")
+                    return None
                 
                 # Basic integrity checks
                 try:
@@ -562,10 +585,15 @@ class TreeOfLifeAdapter(BaseDatasetAdapter):
                     _ = image.mode
                     
                     # Convert problematic modes to RGB
-                    if image.mode not in ['RGB', 'L', 'RGBA']:
-                        image = image.convert('RGB')
+                    if image.mode not in ['RGB', 'L']:
+                        if image.mode in ['RGBA', 'LA', 'P']:
+                            image = image.convert('RGB')
+                        else:
+                            # For any other exotic modes
+                            image = image.convert('RGB')
                         
-                except Exception:
+                except Exception as e:
+                    print(f"⚠️ Image integrity check failed: {e}")
                     return None
                 
                 # Resize very large images if needed
@@ -578,7 +606,8 @@ class TreeOfLifeAdapter(BaseDatasetAdapter):
                             new_width = int(width * ratio)
                             new_height = int(height * ratio)
                             image = image.resize((new_width, new_height), Image.Resampling.LANCZOS)
-                except Exception:
+                except Exception as e:
+                    print(f"⚠️ Image resizing failed: {e}")
                     return None
                 
                 return image
