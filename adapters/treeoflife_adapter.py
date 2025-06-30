@@ -463,11 +463,12 @@ class TreeOfLifeAdapter(BaseDatasetAdapter):
                             
                             del test_image
                         except (UnidentifiedImageError, OSError, IOError) as e:
-                            failed_images.append({
-                                'sample_id': sample_id,
-                                'reason': f'Invalid image format: {str(e)}',
-                                'url': sample_url
-                            })
+                            sample_id = item.get('treeoflife_id', f'index_{idx}')
+                            # More specific error logging
+                            if "not a TIFF file" in str(e):
+                                print(f"⚠️ Corrupt TIFF image skipped (ID: {sample_id}). Error: {e}")
+                            else:
+                                print(f"⚠️ Corrupt image skipped (ID: {sample_id}): {e}")
                             return None
                     else:
                         failed_images.append({
