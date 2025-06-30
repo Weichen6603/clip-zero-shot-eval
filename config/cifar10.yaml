@@ -17,5 +17,5 @@ datasets:
   # CIFAR-10 dataset
   - name: "CIFAR10"
     type: "cifar10"
-    root_path: "/mnt/d/data/cifar10"
+    root_path: "./data/cifar10"
     split: "test"  # train or test

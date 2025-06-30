@@ -19,20 +19,20 @@ datasets:
   # CIFAR-10 dataset (10 classes, quick benchmark)
   - name: "CIFAR10"
     type: "cifar10"
-    root_path: "/mnt/d/data/cifar10"
+    root_path: "./data/cifar10"
     split: "test"
 
   # CIFAR-100 dataset with fine labels (100 classes)
   - name: "CIFAR100_Fine"
     type: "cifar100"
-    root_path: "/mnt/d/data/cifar100"
+    root_path: "./data/cifar100"
     split: "test"
     use_coarse_labels: false
 
   # CIFAR-100 dataset with coarse labels (20 superclasses)
   - name: "CIFAR100_Coarse"
     type: "cifar100"
-    root_path: "/mnt/d/data/cifar100"
+    root_path: "./data/cifar100"
     split: "test"
     use_coarse_labels: true
 
@@ -40,21 +40,21 @@ datasets:
   - name: "SUN397"
     type: "sun397"
     streaming: true
-    root_path: "/mnt/d/data/sun397"
+    root_path: "./data/sun397"
     split: "train"
 
   # ImageNet-1K validation set
   - name: "ImageNet-1K"
     type: "imagenet"
     streaming: true
-    root_path: "/mnt/d/data/imagenet"
+    root_path: "./data/imagenet"
     split: "validation"
 
   # Visual Genome with WordNet synsets (recommended)
   - name: "VisualGenome-Objects-Synsets"
     type: "visual_genome"
     streaming: true
-    root_path: "/mnt/d/data/visual_genome"
+    root_path: "./data/visual_genome"
     split: "train"
     config_name: "objects_v1.2.0"
     max_samples: null      
@@ -65,7 +65,7 @@ datasets:
   - name: "TreeOfLife-10M-Lightweight"
     type: "treeoflife"
     streaming: true
-    root_path: "/mnt/d/data/treeoflife"
+    root_path: "./data/treeoflife"
     split: "train"
     config_name: "train_small"
     taxonomic_level: "species"
