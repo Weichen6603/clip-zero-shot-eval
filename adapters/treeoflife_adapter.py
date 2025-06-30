@@ -270,13 +270,46 @@ class TreeOfLifeAdapter(BaseDatasetAdapter):
             })
         print(f"✅ Valid samples: {len(samples)}")
         return self._filter_samples_by_class_count(samples)
+
+    def _filter_samples_by_class_count(self, samples: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Filters out classes with fewer than min_images_per_class samples."""
+        if self.min_images_per_class <= 1:
+            return samples
+
+        print(f"\n🔍 Filtering classes with less than {self.min_images_per_class} images...")
+        
+        class_counts = Counter(sample['taxonomic_label'] for sample in samples)
+        
+        classes_to_keep = {
+            label for label, count in class_counts.items() 
+            if count >= self.min_images_per_class
+        }
+        
+        original_count = len(samples)
+        original_class_count = len(class_counts)
+        
+        filtered_samples = [
+            sample for sample in samples 
+            if sample['taxonomic_label'] in classes_to_keep
+        ]
+        
+        final_class_count = len(classes_to_keep)
+        
+        print(f"✅ Filtering complete.")
+        print(f"  Original classes: {original_class_count}, Final classes: {final_class_count}")
+        print(f"  Original samples: {original_count}, Final samples: {len(filtered_samples)}")
+        
+        return filtered_samples
+
+    def _estimate_total_samples(self) -> int:
+        """Provides an estimated total number of samples for progress bars."""
+        return 10_000_000 # Based on TreeOfLife-10M documentation
     
     def _load_huggingface_data_optimized(self) -> List[Dict[str, Any]]:
         """OPTIMIZED: Load TreeOfLife-10M with smart sampling and memory catalog."""
         print("📥 Loading TreeOfLife-10M dataset from HuggingFace (OPTIMIZED)...")
         try:
             from datasets import load_dataset
-            from huggingface_hub import hf_hub_download
         except ImportError:
             raise ImportError("HuggingFace datasets library not installed. Run: pip install datasets huggingface_hub")
         
@@ -285,130 +318,114 @@ class TreeOfLifeAdapter(BaseDatasetAdapter):
         dataset_name = "imageomics/TreeOfLife-10M"
         split_to_load = "train"
         print(f"🔗 Loading streaming dataset (split: {split_to_load})...")
-        dataset = load_dataset(
-            dataset_name,
-            split=split_to_load,
-            streaming=True,
-            cache_dir=self.root_path
-        )
         
+        try:
+            dataset = load_dataset(
+                dataset_name,
+                split=split_to_load,
+                streaming=True,
+                cache_dir=self.root_path
+            )
+        except Exception as e:
+            print(f"❌ Failed to load HuggingFace dataset: {e}")
+            return [] # Return empty list on failure
+
         samples = []
         processed_count = 0
         failed_images = []
         catalog_misses = 0
         start_time = time.time()
-        
+
         print("🔍 Processing samples with OPTIMIZED taxonomic lookups...")
         
-        # OPTIMIZATION: Smart sampling strategy
-        estimated_total = self._estimate_total_samples()
-        
-        # For train_small with memory catalog, use smart sampling
-        if self.split == "train_small" and self.memory_catalog and self.split_sample_ids:
-            print("🚀 SMART SAMPLING: Using pre-filtered sample IDs for ultra-fast processing")
+        # Determine target number of samples for the progress bar
+        if self.split == "train_small" and self.split_sample_ids:
             target_samples = len(self.split_sample_ids)
             if self.max_samples:
                 target_samples = min(self.max_samples, target_samples)
             print(f"🎯 Target: {target_samples:,} samples from {len(self.split_sample_ids):,} train_small entries")
         else:
-            # Standard processing
+            target_samples = self.max_samples or self._estimate_total_samples()
             if self.max_samples:
-                scan_limit = min(self.max_samples * 3, estimated_total)
-                print(f"🎯 Target: {self.max_samples} valid samples (scanning up to {scan_limit:,} total)")
-                estimated_total = scan_limit
-            elif self.max_shards:
-                shard_estimate = self.max_shards * 140000
-                estimated_total = min(estimated_total, shard_estimate)
-                print(f"🎯 Processing {self.max_shards} shards (~{estimated_total:,} samples)")
+                 print(f"🎯 Target: {self.max_samples} valid samples (scanning up to ~{target_samples:,} total)")
             else:
-                print(f"🎯 Processing full dataset (~{estimated_total:,} samples)")
-        
-        try:
-            from tqdm import tqdm
-            progress_bar = tqdm(
-                total=estimated_total,
-                desc="Processing samples",
-                unit="samples",
-                bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]",
-                dynamic_ncols=True
-            )
-        except ImportError:
-            progress_bar = None
-            print("💡 Install tqdm for better progress tracking: pip install tqdm")
-        
-        # OPTIMIZATION: Batch processing for reduced overhead
-        batch_size = 100
-        sample_batch = []
-        
-        # Main loop for processing samples
+                 print(f"🎯 Processing full dataset (~{target_samples:,} samples)")
+
+        from tqdm import tqdm
         with tqdm(total=target_samples, desc="Processing samples", unit="sample") as pbar:
             for sample in dataset:
+                if self.max_samples and len(samples) >= self.max_samples:
+                    print(f"\n🏁 Reached max_samples limit of {self.max_samples}. Stopping.")
+                    break
+
+                sample_id_for_error = 'Unknown'
                 try:
-                    # OPTIMIZATION: Use pre-filtered sample IDs for ultra-fast filtering
-                    if self.split_sample_ids and sample['treeoflife_id'] not in self.split_sample_ids:
-                        pbar.update(1)
+                    if not isinstance(sample, dict):
+                        print(f"\n⚠️ Skipping non-dict sample of type {type(sample)}")
+                        failed_images.append({'sample_id': 'N/A', 'reason': f'Invalid sample format (not a dict): {type(sample)}'})
                         continue
 
-                    # Get metadata from memory catalog if available
-                    metadata = self.memory_catalog.get(sample['treeoflife_id'])
+                    sample_id = sample.get('treeoflife_id')
+                    if not sample_id:
+                        failed_images.append({'sample_id': 'Unknown', 'reason': 'Missing treeoflife_id'})
+                        continue
+                    
+                    sample_id_for_error = sample_id
+
+                    if self.split_sample_ids and sample_id not in self.split_sample_ids:
+                        continue
+
+                    metadata = self.memory_catalog.get(sample_id)
                     if metadata is None:
                         catalog_misses += 1
-                        continue  # Skip samples not in catalog
+                        continue
 
-                    # Extract taxonomic label
                     label = metadata.get(self.taxonomic_level)
                     if not label:
                         continue
 
-                    # Store compressed image bytes to save memory
-                    image_bytes = self._compress_image(sample['image'])
+                    image_data = sample.get('image')
+                    if image_data is None:
+                        failed_images.append({'sample_id': sample_id, 'reason': 'Missing image data'})
+                        continue
+
+                    image_bytes = self._compress_image(image_data, sample_id)
                     if image_bytes is None:
-                        failed_images.append(sample['treeoflife_id'])
+                        # Error is logged in _compress_image
+                        failed_images.append({'sample_id': sample_id, 'reason': 'Image processing/compression failed'})
                         continue
                     
                     processed_sample = {
                         "index": processed_count,
                         "taxonomic_label": label,
-                        "treeoflife_id": sample['treeoflife_id'],
-                        "image_bytes": image_bytes,  # Store compressed bytes
+                        "treeoflife_id": sample_id,
+                        "image_bytes": image_bytes,
                         "metadata": metadata
                     }
                     samples.append(processed_sample)
+                    pbar.update(1)
                     pbar.set_postfix(found=len(samples), failed=len(failed_images), refresh=True)
 
-                except (UnidentifiedImageError, OSError, IOError) as e:
-                    sample_id = sample.get('treeoflife_id', 'Unknown ID')
-                    print(f"\n⚠️ Corrupt image skipped during initial loading (ID: {sample_id}). Error: {e}")
-                    failed_images.append(sample_id)
-                    continue # Skip to the next sample
                 except Exception as e:
-                    sample_id = sample.get('treeoflife_id', 'Unknown ID')
-                    print(f"\nUnexpected error processing sample ID {sample_id}: {e}")
-                    traceback.print_exc()
-                    failed_images.append(sample_id)
+                    print(f"\nUnexpected error processing sample ID {sample_id_for_error}: {e}")
+                    failed_images.append({'sample_id': sample_id_for_error, 'reason': str(e)})
                     continue
 
-
                 processed_count += 1
-                pbar.update(1)
         
-        # Close progress bar
-        if progress_bar:
-            progress_bar.close()
-        
-        # Display loading statistics
         elapsed_time = time.time() - start_time
         print(f"\n📊 OPTIMIZED Loading Statistics:")
         print(f"  ⏱️  Total time: {elapsed_time:.1f}s")
         print(f"  📝 Samples processed: {processed_count:,}")
         print(f"  ✅ Valid samples loaded: {len(samples):,}")
-        print(f"  🚀 Processing speed: {processed_count/elapsed_time:.1f} samples/sec")
-        print(f"  🖼️  Image loading failures: {len(failed_images):,}")
-        print(f"  📋 Catalog lookup misses: {catalog_misses}")
+        if elapsed_time > 0:
+            print(f"  🚀 Processing speed: {processed_count/elapsed_time:.1f} samples/sec")
+        print(f"  🖼️  Image loading/processing failures: {len(failed_images):,}")
+        print(f"  📋 Catalog lookup misses: {catalog_misses:,}")
         
         if not samples:
             print("⚠️ No valid samples found, this might indicate data format issues")
-            raise ValueError("No valid samples extracted from TreeOfLife-10M dataset")
+            return []
         
         print(f"\n✅ Successfully loaded {len(samples)} valid samples from TreeOfLife-10M")
         return self._filter_samples_by_class_count(samples)
@@ -439,6 +456,48 @@ class TreeOfLifeAdapter(BaseDatasetAdapter):
         
         return valid_samples
     
+    def _compress_image(self, image: Any, sample_id: str) -> Optional[bytes]:
+        """
+        Compresses a PIL image or image bytes into JPEG format.
+        Handles corrupt images and logs errors.
+        """
+        try:
+            if not isinstance(image, Image.Image):
+                # Assuming it's bytes, try to open it
+                if hasattr(image, 'read'):
+                    image_bytes = image.read()
+                    image = Image.open(io.BytesIO(image_bytes))
+                else:
+                    # If it's not a file-like object, we can't process it
+                    print(f"⚠️ Skipping sample {sample_id}: Invalid image type {type(image)}")
+                    return None
+
+            # Check for excessively large images before processing
+            width, height = image.size
+            if width * height > 100_000_000: # 100 megapixels limit
+                print(f"⚠️ Skipping sample {sample_id}: Image too large ({width}x{height})")
+                return None
+
+            # Convert to RGB if necessary
+            if image.mode in ['RGBA', 'LA', 'P']:
+                image = image.convert('RGB')
+            
+            # Save to in-memory bytes buffer
+            bytes_io = io.BytesIO()
+            image.save(bytes_io, format='JPEG', quality=85, optimize=True)
+            return bytes_io.getvalue()
+
+        except (UnidentifiedImageError, OSError, IOError) as e:
+            # More specific error logging for corrupt images
+            if "not a TIFF file" in str(e):
+                print(f"⚠️ Corrupt TIFF image skipped (ID: {sample_id}). Error: {e}")
+            else:
+                print(f"⚠️ Corrupt image skipped (ID: {sample_id}). Error: {e}")
+            return None
+        except Exception as e:
+            print(f"⚠️ Unexpected error compressing image for sample {sample_id}: {e}")
+            return None
+
     def _process_hf_sample_optimized(self, sample: Dict[str, Any], idx: int, failed_images: List[Dict[str, str]]) -> Optional[Dict[str, Any]]:
         """OPTIMIZED: Process a single sample with optimized catalog lookup."""
         try:
@@ -451,78 +510,21 @@ class TreeOfLifeAdapter(BaseDatasetAdapter):
                 return None
             
             # Extract image from TreeOfLife-10M format
-            image = sample.get('jpg')
-            if image is None:
+            image_data = sample.get('jpg')
+            if image_data is None:
                 failed_images.append({
                     'sample_id': sample_id,
                     'reason': 'No jpg field found',
                     'url': sample_url
                 })
                 return None
-            
+
             # Process and store only compressed image bytes for true streaming
-            image_bytes = None
-            try:
-                if not isinstance(image, Image.Image):
-                    if hasattr(image, 'read'):
-                        image_bytes = image.read()
-                        try:
-                            test_image = Image.open(io.BytesIO(image_bytes))
-                            _ = test_image.size
-                            
-                            width, height = test_image.size
-                            if width * height > 100_000_000:
-                                failed_images.append({
-                                    'sample_id': sample_id,
-                                    'reason': f'Image too large: {width}x{height} pixels',
-                                    'url': sample_url
-                                })
-                                return None
-                            
-                            del test_image
-                        except (UnidentifiedImageError, OSError, IOError) as e:
-                            sample_id = item.get('treeoflife_id', f'index_{idx}')
-                            # More specific error logging
-                            if "not a TIFF file" in str(e):
-                                print(f"⚠️ Corrupt TIFF image skipped (ID: {sample_id}). Error: {e}")
-                            else:
-                                print(f"⚠️ Corrupt image skipped (ID: {sample_id}): {e}")
-                            return None
-                    else:
-                        failed_images.append({
-                            'sample_id': sample_id,
-                            'reason': f'Invalid image type: {type(image)}',
-                            'url': sample_url
-                        })
-                        return None
-                else:
-                    width, height = image.size
-                    if width * height > 100_000_000:
-                        failed_images.append({
-                            'sample_id': sample_id,
-                            'reason': f'Image too large: {width}x{height} pixels',
-                            'url': sample_url
-                        })
-                        return None
-                    
-                    bytes_io = io.BytesIO()
-                    if image.mode in ['RGBA', 'LA', 'P']:
-                        image = image.convert('RGB')
-                    elif image.mode not in ['RGB', 'L']:
-                        image = image.convert('RGB')
-                    
-                    image.save(bytes_io, format='JPEG', quality=85, optimize=True)
-                    image_bytes = bytes_io.getvalue()
-                    del bytes_io
-                
-                del image
-                
-            except Exception as img_error:
-                error_type = type(img_error).__name__
-                error_msg = str(img_error)
+            image_bytes = self._compress_image(image_data, sample_id)
+            if image_bytes is None:
                 failed_images.append({
                     'sample_id': sample_id,
-                    'reason': f'{error_type}: {error_msg}',
+                    'reason': 'Image compression/processing failed',
                     'url': sample_url
                 })
                 return None
@@ -704,371 +706,1357 @@ class TreeOfLifeAdapter(BaseDatasetAdapter):
         return True
     
     def _filter_samples_by_class_count(self, samples: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Filter samples to only include classes with minimum image count."""
-        if not samples:
+        """Filters out classes with fewer than min_images_per_class samples."""
+        if self.min_images_per_class <= 1:
             return samples
-            
-        # Count samples per class
-        class_counts = defaultdict(int)
-        for sample in samples:
-            class_counts[sample['taxonomic_label']] += 1
+
+        print(f"\n🔍 Filtering classes with less than {self.min_images_per_class} images...")
         
-        # Filter classes by minimum count
-        valid_classes = {cls for cls, count in class_counts.items() 
-                        if count >= self.min_images_per_class}
+        # Count occurrences of each class
+        class_counts = Counter(sample['taxonomic_label'] for sample in samples)
         
-        # Filter samples
-        filtered_samples = [s for s in samples if s['taxonomic_label'] in valid_classes]
+        # Identify classes to keep
+        classes_to_keep = {
+            label for label, count in class_counts.items() 
+            if count >= self.min_images_per_class
+        }
         
-        print(f"📊 Class filtering: {len(class_counts)} total classes, {len(valid_classes)} classes with ≥{self.min_images_per_class} samples")
-        print(f"📊 Sample filtering: {len(samples)} → {len(filtered_samples)} samples")
+        original_count = len(samples)
+        original_class_count = len(class_counts)
         
-        if valid_classes:
-            print(f"📊 Classes found: {sorted(list(valid_classes))}")
-            print(f"📊 Class distribution: {dict(Counter(class_counts).most_common())}")
+        # Filter the samples
+        filtered_samples = [
+            sample for sample in samples 
+            if sample['taxonomic_label'] in classes_to_keep
+        ]
+        
+        final_class_count = len(classes_to_keep)
+        
+        print(f"✅ Filtering complete.")
+        print(f"  Original classes: {original_class_count}, Final classes: {final_class_count}")
+        print(f"  Original samples: {original_count}, Final samples: {len(filtered_samples)}")
         
         return filtered_samples
-    
-    def _get_classes(self) -> List[str]:
-        """Extract unique class names from the dataset."""
-        if hasattr(self, '_cached_classes'):
-            return self._cached_classes
-        
-        # Extract classes from loaded data
-        classes = sorted(list(set(sample['taxonomic_label'] for sample in self.data)))
-        self._cached_classes = classes
-        return classes
-    
-    def __getitem__(self, index: int) -> Tuple[torch.Tensor, int]:
-        """Get a sample by index, supporting pandas+local images方式."""
-        try:
-            sample_info = self.data[index]
-            # Pandas+本地图片方式
-            if self.use_pandas and "image_path" in sample_info:
-                image = Image.open(sample_info["image_path"]).convert("RGB")
-            else:
-                image = self._load_image_on_demand(sample_info)
-                if image is None:
-                    image = Image.new('RGB', (224, 224), (128, 128, 128))
-            # Apply transform if specified
-            if self.transform:
-                try:
-                    image = self.transform(image)
-                except Exception as e:
-                    if not hasattr(self, '_transform_errors'):
-                        self._transform_errors = 0
-                    self._transform_errors += 1
-                    if self._transform_errors < 5:
-                        print(f"⚠️ Error applying transform at index {index}: {type(e).__name__}")
-                    image = torch.zeros(3, 224, 224)
-            else:
-                to_tensor = transforms.ToTensor()
-                try:
-                    image = to_tensor(image)
-                except Exception as e:
-                    image = torch.zeros(3, 224, 224)
-            label = self.class_to_idx[sample_info['taxonomic_label']]
-            return image, label
-        except Exception as e:
-            print(f"⚠️ Critical error in __getitem__ at index {index}: {type(e).__name__}: {str(e)}")
-            placeholder_image = torch.zeros(3, 224, 224)
-            placeholder_label = 0
-            return placeholder_image, placeholder_label
-    
-    def _load_image_on_demand(self, sample_info: Dict[str, Any]) -> Optional[Image.Image]:
-        """Load image on-demand from compressed bytes for true streaming behavior."""
-        try:
-            image_source = sample_info.get('image_source', {})
-            if image_source.get('type') == 'compressed_bytes':
-                # Extract compressed image bytes
-                image_bytes = image_source.get('image_bytes')
-                
-                if image_bytes is None:
-                    return None
-                
-                # Decode from compressed bytes with robust error handling
-                try:
-                    # Set a temporary warning filter for this specific operation
-                    with warnings.catch_warnings():
-                        warnings.filterwarnings("ignore")
-                        image = Image.open(io.BytesIO(image_bytes))
-                except (UnidentifiedImageError, OSError, IOError, ValueError) as e:
-                    # Handle specific image format errors including TIFF errors
-                    error_msg = str(e).lower()
-                    if 'tiff' in error_msg or 'tif' in error_msg:
-                        if not hasattr(self, '_tiff_errors'):
-                            self._tiff_errors = 0
-                        self._tiff_errors += 1
-                        if self._tiff_errors < 5:  # Only print first 5 TIFF errors
-                            print(f"⚠️ Skipping TIFF format error: {e}")
-                    else:
-                        print(f"⚠️ Failed to decode image: {e}")
-                    return None
-                except Exception as e:
-                    # Catch any other unexpected errors
-                    print(f"⚠️ Unexpected error decoding image: {type(e).__name__}: {e}")
-                    return None
-                
-                # Basic integrity checks
-                try:
-                    _ = image.size
-                    _ = image.mode
-                    
-                    # Convert problematic modes to RGB
-                    if image.mode not in ['RGB', 'L']:
-                        if image.mode in ['RGBA', 'LA', 'P']:
-                            image = image.convert('RGB')
-                        else:
-                            # For any other exotic modes
-                            image = image.convert('RGB')
-                        
-                except Exception as e:
-                    if not hasattr(self, '_integrity_errors'):
-                        self._integrity_errors = 0
-                    self._integrity_errors += 1
-                    if self._integrity_errors < 5:
-                        print(f"⚠️ Image integrity check failed: {e}")
-                    return None
-                
-                # Resize very large images if needed
-                try:
-                    width, height = image.size
-                    if width * height > 50_000_000:  # 50MP limit for runtime
-                        max_size = 2048
-                        if width > max_size or height > max_size:
-                            ratio = min(max_size / width, max_size / height)
-                            new_width = int(width * ratio)
-                            new_height = int(height * ratio)
-                            image = image.resize((new_width, new_height), Image.Resampling.LANCZOS)
-                except Exception as e:
-                    if not hasattr(self, '_resize_errors'):
-                        self._resize_errors = 0
-                    self._resize_errors += 1
-                    if self._resize_errors < 5:
-                        print(f"⚠️ Image resizing failed: {e}")
-                    return None
-                
-                return image
-            
-            return None
-            
-        except Exception as e:
-            print(f"⚠️ Error loading image on-demand: {type(e).__name__}: {e}")
-            return None
-    
-    def get_templates(self) -> List[str]:
-        """Get text templates for TreeOfLife-10M dataset."""
-        from dataset_adapters import DatasetTemplates
-        # Use unified templates for consistency across all datasets
-        return DatasetTemplates.get_templates()
-    
-    def _init_catalog_lazy_reader(self, catalog_path: str):
-        """Initialize ultra-lightweight catalog reader using text-based indexing."""
-        self.catalog_path = catalog_path
-        
-        # If we already have memory catalog, skip text index creation
-        if self.memory_catalog:
-            print("✅ Using memory catalog, skipping text index")
-            return
-            
-        self.catalog_cache = {}  # Minimal cache for recently accessed entries
-        
-        # Create a simple text index if it doesn't exist
-        index_path = catalog_path.replace('.csv', '_simple_index.txt')
-        
-        if not os.path.exists(index_path) or os.path.getmtime(index_path) < os.path.getmtime(catalog_path):
-            print("🔧 Creating ultra-lightweight text index...")
-            self._create_simple_index(catalog_path, index_path)
-        else:
-            print("✅ Using existing text index")
-        
-        self.index_path = index_path
-        print(f"✅ Ultra-lightweight catalog reader initialized")
-    
-    def _create_simple_index(self, catalog_path: str, index_path: str):
-        """Create minimal index mapping sample_id to line number."""
-        print("📝 Building minimal index (this will take a few minutes but only once)...")
-        
-        with open(index_path, 'w') as index_file:
-            with open(catalog_path, 'r', encoding='utf-8') as csv_file:
-                # Skip header and get column positions
-                header_line = csv_file.readline()
-                header = header_line.strip().split(',')
-                
-                # Find treeoflife_id column
-                try:
-                    id_col = header.index('treeoflife_id')
-                except ValueError:
-                    id_col = 1  # Default assumption
-                
-                line_num = 1  # Start from 1 (after header)
-                entries_indexed = 0
-                
-                for line in csv_file:
-                    line_num += 1
-                    try:
-                        # Split line and extract ID (handle quoted fields)
-                        parts = []
-                        current_part = ""
-                        in_quotes = False
-                        
-                        for char in line:
-                            if char == '"':
-                                in_quotes = not in_quotes
-                            elif char == ',' and not in_quotes:
-                                parts.append(current_part.strip('"'))
-                                current_part = ""
-                                continue
-                            current_part += char
-                        
-                        if current_part:
-                            parts.append(current_part.strip('"'))
-                        
-                        if len(parts) > id_col:
-                            sample_id = parts[id_col].strip()
-                            if sample_id and sample_id != 'treeoflife_id':
-                                index_file.write(f"{sample_id}:{line_num}\n")
-                                entries_indexed += 1
-                                
-                                if entries_indexed % 200000 == 0:
-                                    print(f"📊 Indexed {entries_indexed:,} entries...")
-                    
-                    except Exception:
-                        continue  # Skip malformed lines
-                
-                print(f"✅ Index complete: {entries_indexed:,} entries")
-    
-    def _estimate_total_samples(self) -> int:
-        """Estimate total number of samples in the dataset based on split."""
-        
-        # OPTIMIZATION: Use memory catalog count if available
-        if self.memory_catalog:
-            if self.split == "train_small":
-                count = len([v for v in self.memory_catalog.values() if v.get('split') == 'train_small'])
-                print(f"📊 Memory catalog shows {count:,} samples for '{self.split}' split")
-                return count
-            else:
-                count = len(self.memory_catalog)
-                print(f"📊 Memory catalog shows {count:,} total samples")
-                return count
-        
-        # Known sample counts for different splits
-        split_sizes = {
-            'train': 10_988_032,      # Full training set
-            'train_small': 953_000,   # Lightweight training set (~953K samples)
-        }
-        
-        # If we have a known split size, use it
-        if self.split in split_sizes:
-            estimated_size = split_sizes[self.split]
-            print(f"📊 Using known size for split '{self.split}': ~{estimated_size:,} samples")
-            return estimated_size
-        
-        # Method 1: Try to get from catalog if available (but adjust for split)
-        if hasattr(self, 'catalog_path') and os.path.exists(self.catalog_path):
-            try:
-                # Count lines in catalog (minus header)
-                with open(self.catalog_path, 'r') as f:
-                    line_count = sum(1 for _ in f) - 1  # Subtract header
-                
-                # If using train_small, the catalog still shows all samples but we need to estimate
-                # the actual filtered count. train_small is roughly 8.7% of the full dataset
-                if self.split == 'train_small':
-                    estimated_filtered = int(line_count * 0.087)  # ~8.7% ratio
-                    print(f"📊 Catalog shows {line_count:,} total samples, estimating ~{estimated_filtered:,} for '{self.split}' split")
-                    return estimated_filtered
-                else:
-                    print(f"📊 Catalog indicates ~{line_count:,} total samples for split '{self.split}'")
-                    return line_count
-            except Exception as e:
-                print(f"⚠️  Could not count catalog entries: {e}")
-        
-        # Method 2: Check if index file exists and count entries (with split adjustment)
-        if hasattr(self, 'index_path') and os.path.exists(self.index_path):
-            try:
-                with open(self.index_path, 'r') as f:
-                    index_count = sum(1 for _ in f)
-                
-                # Apply split ratio if needed
-                if self.split == 'train_small':
-                    estimated_filtered = int(index_count * 0.087)
-                    print(f"📊 Index shows {index_count:,} entries, estimating ~{estimated_filtered:,} for '{self.split}' split")
-                    return estimated_filtered
-                else:
-                    print(f"📊 Index indicates ~{index_count:,} total samples for split '{self.split}'")
-                    return index_count
-            except Exception as e:
-                print(f"⚠️  Could not count index entries: {e}")
-        
-        # Method 3: Use known dataset size as fallback
-        fallback_size = split_sizes.get(self.split, 10_988_032)
-        print(f"📊 Using default size estimate for split '{self.split}': ~{fallback_size:,} samples")
-        return fallback_size
-    
-    def _parse_catalog_line(self, line: str) -> Dict[str, str]:
-        """Parse a CSV line manually to extract taxonomy fields."""
-        # Simple CSV parsing (handles basic quoting)
-        parts = []
-        current_part = ""
-        in_quotes = False
-        
-        for char in line.strip():
-            if char == '"':
-                in_quotes = not in_quotes
-            elif char == ',' and not in_quotes:
-                parts.append(current_part.strip('"'))
-                current_part = ""
-                continue
-            current_part += char
-        
-        if current_part:
-            parts.append(current_part.strip('"'))
-        
-        # Map to taxonomy fields (adjust indices based on catalog structure)
-        # Typical order: split,treeoflife_id,eol_content_id,eol_page_id,bioscan_part,bioscan_filename,
-        #                inat21_filename,inat21_cls_name,inat21_cls_num,kingdom,phylum,class,order,family,genus,species,common
-        return {
-            'kingdom': parts[9] if len(parts) > 9 else '',
-            'phylum': parts[10] if len(parts) > 10 else '',
-            'class': parts[11] if len(parts) > 11 else '',
-            'order': parts[12] if len(parts) > 12 else '',
-            'family': parts[13] if len(parts) > 13 else '',
-            'genus': parts[14] if len(parts) > 14 else '',
-            'species': parts[15] if len(parts) > 15 else '',
-            'common': parts[16] if len(parts) > 16 else '',
-            'split': parts[0] if len(parts) > 0 else 'train'
-        }
 
-    def get_dataset_info(self) -> Dict[str, Any]:
-        """Get information about the dataset without loading all data."""
-        info = {
-            'dataset_name': 'TreeOfLife-10M',
-            'taxonomic_level': self.taxonomic_level,
-            'estimated_total_samples': self._estimate_total_samples()
-        }
+    def _estimate_total_samples(self) -> int:
+        """Provides an estimated total number of samples for progress bars."""
+        # Based on TreeOfLife-10M, the train split has ~10M samples.
+        # This is a rough estimate for the progress bar.
+        return 10_000_000
+    
+    def _load_huggingface_data_optimized(self) -> List[Dict[str, Any]]:
+        """OPTIMIZED: Load TreeOfLife-10M with smart sampling and memory catalog."""
+        print("📥 Loading TreeOfLife-10M dataset from HuggingFace (OPTIMIZED)...")
+        try:
+            from datasets import load_dataset
+        except ImportError:
+            raise ImportError("HuggingFace datasets library not installed. Run: pip install datasets huggingface_hub")
         
-        # Add catalog info if available
-        if hasattr(self, 'catalog_path') and os.path.exists(self.catalog_path):
-            info['catalog_available'] = True
-            info['catalog_path'] = self.catalog_path
+        print("⚠️  This may require authentication: huggingface-cli login")
+        
+        dataset_name = "imageomics/TreeOfLife-10M"
+        split_to_load = "train"
+        print(f"🔗 Loading streaming dataset (split: {split_to_load})...")
+        
+        try:
+            dataset = load_dataset(
+                dataset_name,
+                split=split_to_load,
+                streaming=True,
+                cache_dir=self.root_path
+            )
+        except Exception as e:
+            print(f"❌ Failed to load HuggingFace dataset: {e}")
+            return [] # Return empty list on failure
+
+        samples = []
+        processed_count = 0
+        failed_images = []
+        catalog_misses = 0
+        start_time = time.time()
+
+        print("🔍 Processing samples with OPTIMIZED taxonomic lookups...")
+        
+        # Determine target number of samples for the progress bar
+        if self.split == "train_small" and self.split_sample_ids:
+            target_samples = len(self.split_sample_ids)
+            if self.max_samples:
+                target_samples = min(self.max_samples, target_samples)
+            print(f"🎯 Target: {target_samples:,} samples from {len(self.split_sample_ids):,} train_small entries")
         else:
-            info['catalog_available'] = False
+            target_samples = self.max_samples or self._estimate_total_samples()
+            if self.max_samples:
+                 print(f"🎯 Target: {self.max_samples} valid samples (scanning up to ~{target_samples:,} total)")
+            else:
+                 print(f"🎯 Processing full dataset (~{target_samples:,} samples)")
+
+        from tqdm import tqdm
+        with tqdm(total=target_samples, desc="Processing samples", unit="sample") as pbar:
+            for sample in dataset:
+                if self.max_samples and len(samples) >= self.max_samples:
+                    print(f"\n🏁 Reached max_samples limit of {self.max_samples}. Stopping.")
+                    break
+
+                sample_id_for_error = 'Unknown'
+                try:
+                    if not isinstance(sample, dict):
+                        print(f"\n⚠️ Skipping non-dict sample of type {type(sample)}")
+                        failed_images.append({'sample_id': 'N/A', 'reason': f'Invalid sample format (not a dict): {type(sample)}'})
+                        continue
+
+                    sample_id = sample.get('treeoflife_id')
+                    if not sample_id:
+                        failed_images.append({'sample_id': 'Unknown', 'reason': 'Missing treeoflife_id'})
+                        continue
+                    
+                    sample_id_for_error = sample_id
+
+                    if self.split_sample_ids and sample_id not in self.split_sample_ids:
+                        continue
+
+                    metadata = self.memory_catalog.get(sample_id)
+                    if metadata is None:
+                        catalog_misses += 1
+                        continue
+
+                    label = metadata.get(self.taxonomic_level)
+                    if not label:
+                        continue
+
+                    image_data = sample.get('image')
+                    if image_data is None:
+                        failed_images.append({'sample_id': sample_id, 'reason': 'Missing image data'})
+                        continue
+
+                    image_bytes = self._compress_image(image_data, sample_id)
+                    if image_bytes is None:
+                        # Error is logged in _compress_image
+                        failed_images.append({'sample_id': sample_id, 'reason': 'Image processing/compression failed'})
+                        continue
+                    
+                    processed_sample = {
+                        "index": processed_count,
+                        "taxonomic_label": label,
+                        "treeoflife_id": sample_id,
+                        "image_bytes": image_bytes,
+                        "metadata": metadata
+                    }
+                    samples.append(processed_sample)
+                    pbar.update(1)
+                    pbar.set_postfix(found=len(samples), failed=len(failed_images), refresh=True)
+
+                except Exception as e:
+                    print(f"\nUnexpected error processing sample ID {sample_id_for_error}: {e}")
+                    failed_images.append({'sample_id': sample_id_for_error, 'reason': str(e)})
+                    continue
+
+                processed_count += 1
         
-        # Add optimization info
-        info['optimizations'] = {
-            'memory_catalog_loaded': self.memory_catalog is not None,
-            'memory_catalog_size': len(self.memory_catalog) if self.memory_catalog else 0,
-            'smart_sampling_enabled': self.use_smart_sampling,
-            'catalog_cache_size': self.catalog_cache_size
+        elapsed_time = time.time() - start_time
+        print(f"\n📊 OPTIMIZED Loading Statistics:")
+        print(f"  ⏱️  Total time: {elapsed_time:.1f}s")
+        print(f"  📝 Samples processed: {processed_count:,}")
+        print(f"  ✅ Valid samples loaded: {len(samples):,}")
+        if elapsed_time > 0:
+            print(f"  🚀 Processing speed: {processed_count/elapsed_time:.1f} samples/sec")
+        print(f"  🖼️  Image loading/processing failures: {len(failed_images):,}")
+        print(f"  📋 Catalog lookup misses: {catalog_misses:,}")
+        
+        if not samples:
+            print("⚠️ No valid samples found, this might indicate data format issues")
+            return []
+        
+        print(f"\n✅ Successfully loaded {len(samples)} valid samples from TreeOfLife-10M")
+        return self._filter_samples_by_class_count(samples)
+    
+    def _process_sample_batch(self, sample_batch: List[Tuple[int, Dict]], failed_images: List[Dict], catalog_misses: int) -> List[Dict[str, Any]]:
+        """OPTIMIZATION: Process samples in batches for better performance."""
+        valid_samples = []
+        
+        for idx, sample in sample_batch:
+            try:
+                sample_info = self._process_hf_sample_optimized(sample, idx, failed_images)
+                if sample_info:
+                    # If filtering by split, skip mismatched
+                    if self.split == "train_small":
+                        if sample_info.get('metadata', {}).get('split') != self.split:
+                            continue
+                    valid_samples.append(sample_info)
+                else:
+                    # Check if it was a catalog miss
+                    sample_id = sample.get('__key__', f'sample_{idx}')
+                    if not self._get_taxonomy_from_catalog_optimized(sample_id):
+                        catalog_misses += 1
+                        
+            except Exception as e:
+                if idx < 10:  # Show details for first few errors
+                    print(f"⚠️ Critical error processing sample {idx}: {e}")
+                continue
+        
+        return valid_samples
+    
+    def _compress_image(self, image: Any, sample_id: str) -> Optional[bytes]:
+        """
+        Compresses a PIL image or image bytes into JPEG format.
+        Handles corrupt images and logs errors.
+        """
+        try:
+            if not isinstance(image, Image.Image):
+                # Assuming it's bytes, try to open it
+                if hasattr(image, 'read'):
+                    image_bytes = image.read()
+                    image = Image.open(io.BytesIO(image_bytes))
+                else:
+                    # If it's not a file-like object, we can't process it
+                    print(f"⚠️ Skipping sample {sample_id}: Invalid image type {type(image)}")
+                    return None
+
+            # Check for excessively large images before processing
+            width, height = image.size
+            if width * height > 100_000_000: # 100 megapixels limit
+                print(f"⚠️ Skipping sample {sample_id}: Image too large ({width}x{height})")
+                return None
+
+            # Convert to RGB if necessary
+            if image.mode in ['RGBA', 'LA', 'P']:
+                image = image.convert('RGB')
+            
+            # Save to in-memory bytes buffer
+            bytes_io = io.BytesIO()
+            image.save(bytes_io, format='JPEG', quality=85, optimize=True)
+            return bytes_io.getvalue()
+
+        except (UnidentifiedImageError, OSError, IOError) as e:
+            # More specific error logging for corrupt images
+            if "not a TIFF file" in str(e):
+                print(f"⚠️ Corrupt TIFF image skipped (ID: {sample_id}). Error: {e}")
+            else:
+                print(f"⚠️ Corrupt image skipped (ID: {sample_id}). Error: {e}")
+            return None
+        except Exception as e:
+            print(f"⚠️ Unexpected error compressing image for sample {sample_id}: {e}")
+            return None
+
+    def _process_hf_sample_optimized(self, sample: Dict[str, Any], idx: int, failed_images: List[Dict[str, str]]) -> Optional[Dict[str, Any]]:
+        """OPTIMIZED: Process a single sample with optimized catalog lookup."""
+        try:
+            sample_id = sample.get('__key__', f'sample_{idx}')
+            sample_url = sample.get('__url__', '')
+            
+            # For train_small with smart sampling, skip non-target samples early
+            if (self.split == "train_small" and self.split_sample_ids and 
+                sample_id not in self.split_sample_ids):
+                return None
+            
+            # Extract image from TreeOfLife-10M format
+            image_data = sample.get('jpg')
+            if image_data is None:
+                failed_images.append({
+                    'sample_id': sample_id,
+                    'reason': 'No jpg field found',
+                    'url': sample_url
+                })
+                return None
+
+            # Process and store only compressed image bytes for true streaming
+            image_bytes = self._compress_image(image_data, sample_id)
+            if image_bytes is None:
+                failed_images.append({
+                    'sample_id': sample_id,
+                    'reason': 'Image compression/processing failed',
+                    'url': sample_url
+                })
+                return None
+            
+            # OPTIMIZED: Use memory catalog for ultra-fast lookup
+            taxonomy = self._get_taxonomy_from_catalog_optimized(sample_id)
+            
+            if not taxonomy:
+                return None
+            
+            # Extract taxonomic label at specified level
+            taxonomic_label = self._get_taxonomic_label_from_dict(taxonomy)
+            if not taxonomic_label:
+                return None
+            
+            # Skip if excluding partial labels and sample doesn't have full taxonomy
+            if self.exclude_partial_labels and not self._has_full_taxonomy_from_dict(taxonomy):
+                return None
+                
+            sample_info = {
+                'index': idx,
+                'taxonomic_label': taxonomic_label,
+                'common_name': taxonomy.get('common', ''),
+                'scientific_name': taxonomy.get('species', ''),
+                'treeoflife_id': sample_id,
+                'metadata': taxonomy,
+                'image_source': {
+                    'type': 'compressed_bytes',
+                    'image_bytes': image_bytes,
+                    'sample_id': sample_id,
+                }
+            }
+            
+            return sample_info
+            
+        except Exception as e:
+            return None
+    
+    def _get_taxonomy_from_catalog_optimized(self, sample_id: str) -> Optional[Dict[str, str]]:
+        """OPTIMIZED: Ultra-fast taxonomy lookup using memory catalog."""
+        # OPTIMIZATION 1: Use memory catalog if available (for train_small)
+        if self.memory_catalog and sample_id in self.memory_catalog:
+            return self.memory_catalog[sample_id]
+        
+        # OPTIMIZATION 2: Use larger in-memory cache
+        if sample_id in self.catalog_cache:
+            return self.catalog_cache[sample_id]
+        
+        # Fallback to original method for samples not in memory catalog
+        taxonomy = self._get_taxonomy_from_catalog_original(sample_id)
+        
+        # Add to cache with larger size
+        if taxonomy and len(self.catalog_cache) < self.catalog_cache_size:
+            self.catalog_cache[sample_id] = taxonomy
+        elif taxonomy and len(self.catalog_cache) >= self.catalog_cache_size:
+            # Remove 25% of cache when full (keep more entries)
+            keys_to_remove = list(self.catalog_cache.keys())[:self.catalog_cache_size//4]
+            for key in keys_to_remove:
+                del self.catalog_cache[key]
+            self.catalog_cache[sample_id] = taxonomy
+        
+        return taxonomy
+    
+    def _get_taxonomy_from_catalog_original(self, sample_id: str) -> Optional[Dict[str, str]]:
+        """Original catalog lookup method as fallback."""
+        if not hasattr(self, 'index_path') or not os.path.exists(self.index_path):
+            return None
+        
+        try:
+            # Search index file for line number
+            target_line = None
+            with open(self.index_path, 'r') as index_file:
+                for line in index_file:
+                    if line.startswith(f"{sample_id}:"):
+                        target_line = int(line.split(':')[1].strip())
+                        break
+            
+            if target_line is None:
+                return None
+            
+            # Read specific line from catalog
+            with open(self.catalog_path, 'r', encoding='utf-8') as csv_file:
+                for current_line_num, line in enumerate(csv_file, 1):
+                    if current_line_num == target_line:
+                        taxonomy = self._parse_catalog_line(line)
+                        return taxonomy
+                        
+            return None
+            
+        except Exception as e:
+            return None
+
+    def _get_taxonomic_label_from_dict(self, taxonomy: Dict[str, str]) -> Optional[str]:
+        """Extract taxonomic label at the specified level with optional strict filtering."""
+        level_map = {
+            'kingdom': 'kingdom',
+            'phylum': 'phylum', 
+            'class': 'class',
+            'order': 'order',
+            'family': 'family',
+            'genus': 'genus',
+            'species': 'species'
         }
         
-        # Add configuration info
-        info['config'] = {
-            'max_samples': self.max_samples,
-            'max_shards': self.max_shards,
-            'min_images_per_class': self.min_images_per_class,
-            'strict_label_filtering': self.strict_label_filtering,
-            'exclude_partial_labels': self.exclude_partial_labels
+        if self.taxonomic_level not in level_map:
+            return None
+        
+        field_name = level_map[self.taxonomic_level]
+        label = str(taxonomy.get(field_name, '')).strip()
+        
+        # Basic filtering: always filter empty or obviously invalid labels
+        basic_invalid = ['', 'nan', 'none', 'n/a', 'null']
+        if not label or label.lower() in basic_invalid:
+            return None
+        
+        # Apply strict filtering only if enabled
+        if self.strict_label_filtering:
+            # Strict filtering: Return None for uncertain/confusing/hybrid labels
+            uncertain_indicators = [
+                'unknown', 'sp.', 'confusor', 'confuse', 'uncertain', 'unclear', 'ambiguous',
+                'unidentified', 'unidentifiable', 'indeterminate', 'questionable'
+            ]
+            
+            if label.lower() in uncertain_indicators:
+                return None
+            
+            # Filter hybrid indicators (x species, hybrids)
+            if 'x ' in label.lower() or ' x ' in label.lower():
+                return None
+            
+            # Filter uncertain species indicators
+            if 'sp.' in label or 'spp.' in label:
+                return None
+                
+            # Filter specimens with cf. (compare with), aff. (affinity with) - uncertain ID
+            if 'cf.' in label.lower() or 'aff.' in label.lower():
+                return None
+                
+            # Filter complex species (species complex, species group)
+            if 'complex' in label.lower() or 'group' in label.lower():
+                return None
+                
+            # Filter near/close to (nr./near) indicators
+            if 'nr.' in label.lower() or 'near' in label.lower():
+                return None
+                
+            # Filter subspecies indicators that suggest uncertainty
+            if label.endswith(' ssp.') or ' ssp. ' in label:
+                return None
+                
+            # Additional filters for specific taxonomic levels
+            if self.taxonomic_level == 'species':
+                # For species level, be extra strict
+                # Filter names with numbers (often indicate forms/varieties/uncertain status)
+                if any(char.isdigit() for char in label):
+                    return None
+                    
+                # Filter very short species names (likely incomplete)
+                parts = label.split()
+                if len(parts) < 2:  # Species should have at least genus + species
+                    return None
+                    
+                # Filter if genus or species part contains uncertain indicators
+                for part in parts:
+                    if any(indicator in part.lower() for indicator in ['sp', 'cf', 'aff', 'nr']):
+                        return None
+        
+        return label
+    
+    def _has_full_taxonomy_from_dict(self, taxonomy: Dict[str, str]) -> bool:
+        """Check if taxonomy dict has labels for all major taxonomic levels."""
+        required_fields = ['kingdom', 'phylum', 'class', 'order', 'family', 'genus', 'species']
+        
+        for field in required_fields:
+            value = str(taxonomy.get(field, '')).strip()
+            if not value or value.lower() in ['nan', 'none', 'n/a']:
+                return False
+        
+        return True
+    
+    def _filter_samples_by_class_count(self, samples: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Filters out classes with fewer than min_images_per_class samples."""
+        if self.min_images_per_class <= 1:
+            return samples
+
+        print(f"\n🔍 Filtering classes with less than {self.min_images_per_class} images...")
+        
+        # Count occurrences of each class
+        class_counts = Counter(sample['taxonomic_label'] for sample in samples)
+        
+        # Identify classes to keep
+        classes_to_keep = {
+            label for label, count in class_counts.items() 
+            if count >= self.min_images_per_class
         }
         
-        return info
+        original_count = len(samples)
+        original_class_count = len(class_counts)
+        
+        # Filter the samples
+        filtered_samples = [
+            sample for sample in samples 
+            if sample['taxonomic_label'] in classes_to_keep
+        ]
+        
+        final_class_count = len(classes_to_keep)
+        
+        print(f"✅ Filtering complete.")
+        print(f"  Original classes: {original_class_count}, Final classes: {final_class_count}")
+        print(f"  Original samples: {original_count}, Final samples: {len(filtered_samples)}")
+        
+        return filtered_samples
+
+    def _estimate_total_samples(self) -> int:
+        """Provides an estimated total number of samples for progress bars."""
+        # Based on TreeOfLife-10M, the train split has ~10M samples.
+        # This is a rough estimate for the progress bar.
+        return 10_000_000
+    
+    def _load_huggingface_data_optimized(self) -> List[Dict[str, Any]]:
+        """OPTIMIZED: Load TreeOfLife-10M with smart sampling and memory catalog."""
+        print("📥 Loading TreeOfLife-10M dataset from HuggingFace (OPTIMIZED)...")
+        try:
+            from datasets import load_dataset
+        except ImportError:
+            raise ImportError("HuggingFace datasets library not installed. Run: pip install datasets huggingface_hub")
+        
+        print("⚠️  This may require authentication: huggingface-cli login")
+        
+        dataset_name = "imageomics/TreeOfLife-10M"
+        split_to_load = "train"
+        print(f"🔗 Loading streaming dataset (split: {split_to_load})...")
+        
+        try:
+            dataset = load_dataset(
+                dataset_name,
+                split=split_to_load,
+                streaming=True,
+                cache_dir=self.root_path
+            )
+        except Exception as e:
+            print(f"❌ Failed to load HuggingFace dataset: {e}")
+            return [] # Return empty list on failure
+
+        samples = []
+        processed_count = 0
+        failed_images = []
+        catalog_misses = 0
+        start_time = time.time()
+
+        print("🔍 Processing samples with OPTIMIZED taxonomic lookups...")
+        
+        # Determine target number of samples for the progress bar
+        if self.split == "train_small" and self.split_sample_ids:
+            target_samples = len(self.split_sample_ids)
+            if self.max_samples:
+                target_samples = min(self.max_samples, target_samples)
+            print(f"🎯 Target: {target_samples:,} samples from {len(self.split_sample_ids):,} train_small entries")
+        else:
+            target_samples = self.max_samples or self._estimate_total_samples()
+            if self.max_samples:
+                 print(f"🎯 Target: {self.max_samples} valid samples (scanning up to ~{target_samples:,} total)")
+            else:
+                 print(f"🎯 Processing full dataset (~{target_samples:,} samples)")
+
+        from tqdm import tqdm
+        with tqdm(total=target_samples, desc="Processing samples", unit="sample") as pbar:
+            for sample in dataset:
+                if self.max_samples and len(samples) >= self.max_samples:
+                    print(f"\n🏁 Reached max_samples limit of {self.max_samples}. Stopping.")
+                    break
+
+                sample_id_for_error = 'Unknown'
+                try:
+                    if not isinstance(sample, dict):
+                        print(f"\n⚠️ Skipping non-dict sample of type {type(sample)}")
+                        failed_images.append({'sample_id': 'N/A', 'reason': f'Invalid sample format (not a dict): {type(sample)}'})
+                        continue
+
+                    sample_id = sample.get('treeoflife_id')
+                    if not sample_id:
+                        failed_images.append({'sample_id': 'Unknown', 'reason': 'Missing treeoflife_id'})
+                        continue
+                    
+                    sample_id_for_error = sample_id
+
+                    if self.split_sample_ids and sample_id not in self.split_sample_ids:
+                        continue
+
+                    metadata = self.memory_catalog.get(sample_id)
+                    if metadata is None:
+                        catalog_misses += 1
+                        continue
+
+                    label = metadata.get(self.taxonomic_level)
+                    if not label:
+                        continue
+
+                    image_data = sample.get('image')
+                    if image_data is None:
+                        failed_images.append({'sample_id': sample_id, 'reason': 'Missing image data'})
+                        continue
+
+                    image_bytes = self._compress_image(image_data, sample_id)
+                    if image_bytes is None:
+                        # Error is logged in _compress_image
+                        failed_images.append({'sample_id': sample_id, 'reason': 'Image processing/compression failed'})
+                        continue
+                    
+                    processed_sample = {
+                        "index": processed_count,
+                        "taxonomic_label": label,
+                        "treeoflife_id": sample_id,
+                        "image_bytes": image_bytes,
+                        "metadata": metadata
+                    }
+                    samples.append(processed_sample)
+                    pbar.update(1)
+                    pbar.set_postfix(found=len(samples), failed=len(failed_images), refresh=True)
+
+                except Exception as e:
+                    print(f"\nUnexpected error processing sample ID {sample_id_for_error}: {e}")
+                    failed_images.append({'sample_id': sample_id_for_error, 'reason': str(e)})
+                    continue
+
+                processed_count += 1
+        
+        elapsed_time = time.time() - start_time
+        print(f"\n📊 OPTIMIZED Loading Statistics:")
+        print(f"  ⏱️  Total time: {elapsed_time:.1f}s")
+        print(f"  📝 Samples processed: {processed_count:,}")
+        print(f"  ✅ Valid samples loaded: {len(samples):,}")
+        if elapsed_time > 0:
+            print(f"  🚀 Processing speed: {processed_count/elapsed_time:.1f} samples/sec")
+        print(f"  🖼️  Image loading/processing failures: {len(failed_images):,}")
+        print(f"  📋 Catalog lookup misses: {catalog_misses:,}")
+        
+        if not samples:
+            print("⚠️ No valid samples found, this might indicate data format issues")
+            return []
+        
+        print(f"\n✅ Successfully loaded {len(samples)} valid samples from TreeOfLife-10M")
+        return self._filter_samples_by_class_count(samples)
+    
+    def _process_sample_batch(self, sample_batch: List[Tuple[int, Dict]], failed_images: List[Dict], catalog_misses: int) -> List[Dict[str, Any]]:
+        """OPTIMIZATION: Process samples in batches for better performance."""
+        valid_samples = []
+        
+        for idx, sample in sample_batch:
+            try:
+                sample_info = self._process_hf_sample_optimized(sample, idx, failed_images)
+                if sample_info:
+                    # If filtering by split, skip mismatched
+                    if self.split == "train_small":
+                        if sample_info.get('metadata', {}).get('split') != self.split:
+                            continue
+                    valid_samples.append(sample_info)
+                else:
+                    # Check if it was a catalog miss
+                    sample_id = sample.get('__key__', f'sample_{idx}')
+                    if not self._get_taxonomy_from_catalog_optimized(sample_id):
+                        catalog_misses += 1
+                        
+            except Exception as e:
+                if idx < 10:  # Show details for first few errors
+                    print(f"⚠️ Critical error processing sample {idx}: {e}")
+                continue
+        
+        return valid_samples
+    
+    def _compress_image(self, image: Any, sample_id: str) -> Optional[bytes]:
+        """
+        Compresses a PIL image or image bytes into JPEG format.
+        Handles corrupt images and logs errors.
+        """
+        try:
+            if not isinstance(image, Image.Image):
+                # Assuming it's bytes, try to open it
+                if hasattr(image, 'read'):
+                    image_bytes = image.read()
+                    image = Image.open(io.BytesIO(image_bytes))
+                else:
+                    # If it's not a file-like object, we can't process it
+                    print(f"⚠️ Skipping sample {sample_id}: Invalid image type {type(image)}")
+                    return None
+
+            # Check for excessively large images before processing
+            width, height = image.size
+            if width * height > 100_000_000: # 100 megapixels limit
+                print(f"⚠️ Skipping sample {sample_id}: Image too large ({width}x{height})")
+                return None
+
+            # Convert to RGB if necessary
+            if image.mode in ['RGBA', 'LA', 'P']:
+                image = image.convert('RGB')
+            
+            # Save to in-memory bytes buffer
+            bytes_io = io.BytesIO()
+            image.save(bytes_io, format='JPEG', quality=85, optimize=True)
+            return bytes_io.getvalue()
+
+        except (UnidentifiedImageError, OSError, IOError) as e:
+            # More specific error logging for corrupt images
+            if "not a TIFF file" in str(e):
+                print(f"⚠️ Corrupt TIFF image skipped (ID: {sample_id}). Error: {e}")
+            else:
+                print(f"⚠️ Corrupt image skipped (ID: {sample_id}). Error: {e}")
+            return None
+        except Exception as e:
+            print(f"⚠️ Unexpected error compressing image for sample {sample_id}: {e}")
+            return None
+
+    def _process_hf_sample_optimized(self, sample: Dict[str, Any], idx: int, failed_images: List[Dict[str, str]]) -> Optional[Dict[str, Any]]:
+        """OPTIMIZED: Process a single sample with optimized catalog lookup."""
+        try:
+            sample_id = sample.get('__key__', f'sample_{idx}')
+            sample_url = sample.get('__url__', '')
+            
+            # For train_small with smart sampling, skip non-target samples early
+            if (self.split == "train_small" and self.split_sample_ids and 
+                sample_id not in self.split_sample_ids):
+                return None
+            
+            # Extract image from TreeOfLife-10M format
+            image_data = sample.get('jpg')
+            if image_data is None:
+                failed_images.append({
+                    'sample_id': sample_id,
+                    'reason': 'No jpg field found',
+                    'url': sample_url
+                })
+                return None
+
+            # Process and store only compressed image bytes for true streaming
+            image_bytes = self._compress_image(image_data, sample_id)
+            if image_bytes is None:
+                failed_images.append({
+                    'sample_id': sample_id,
+                    'reason': 'Image compression/processing failed',
+                    'url': sample_url
+                })
+                return None
+            
+            # OPTIMIZED: Use memory catalog for ultra-fast lookup
+            taxonomy = self._get_taxonomy_from_catalog_optimized(sample_id)
+            
+            if not taxonomy:
+                return None
+            
+            # Extract taxonomic label at specified level
+            taxonomic_label = self._get_taxonomic_label_from_dict(taxonomy)
+            if not taxonomic_label:
+                return None
+            
+            # Skip if excluding partial labels and sample doesn't have full taxonomy
+            if self.exclude_partial_labels and not self._has_full_taxonomy_from_dict(taxonomy):
+                return None
+                
+            sample_info = {
+                'index': idx,
+                'taxonomic_label': taxonomic_label,
+                'common_name': taxonomy.get('common', ''),
+                'scientific_name': taxonomy.get('species', ''),
+                'treeoflife_id': sample_id,
+                'metadata': taxonomy,
+                'image_source': {
+                    'type': 'compressed_bytes',
+                    'image_bytes': image_bytes,
+                    'sample_id': sample_id,
+                }
+            }
+            
+            return sample_info
+            
+        except Exception as e:
+            return None
+    
+    def _get_taxonomy_from_catalog_optimized(self, sample_id: str) -> Optional[Dict[str, str]]:
+        """OPTIMIZED: Ultra-fast taxonomy lookup using memory catalog."""
+        # OPTIMIZATION 1: Use memory catalog if available (for train_small)
+        if self.memory_catalog and sample_id in self.memory_catalog:
+            return self.memory_catalog[sample_id]
+        
+        # OPTIMIZATION 2: Use larger in-memory cache
+        if sample_id in self.catalog_cache:
+            return self.catalog_cache[sample_id]
+        
+        # Fallback to original method for samples not in memory catalog
+        taxonomy = self._get_taxonomy_from_catalog_original(sample_id)
+        
+        # Add to cache with larger size
+        if taxonomy and len(self.catalog_cache) < self.catalog_cache_size:
+            self.catalog_cache[sample_id] = taxonomy
+        elif taxonomy and len(self.catalog_cache) >= self.catalog_cache_size:
+            # Remove 25% of cache when full (keep more entries)
+            keys_to_remove = list(self.catalog_cache.keys())[:self.catalog_cache_size//4]
+            for key in keys_to_remove:
+                del self.catalog_cache[key]
+            self.catalog_cache[sample_id] = taxonomy
+        
+        return taxonomy
+    
+    def _get_taxonomy_from_catalog_original(self, sample_id: str) -> Optional[Dict[str, str]]:
+        """Original catalog lookup method as fallback."""
+        if not hasattr(self, 'index_path') or not os.path.exists(self.index_path):
+            return None
+        
+        try:
+            # Search index file for line number
+            target_line = None
+            with open(self.index_path, 'r') as index_file:
+                for line in index_file:
+                    if line.startswith(f"{sample_id}:"):
+                        target_line = int(line.split(':')[1].strip())
+                        break
+            
+            if target_line is None:
+                return None
+            
+            # Read specific line from catalog
+            with open(self.catalog_path, 'r', encoding='utf-8') as csv_file:
+                for current_line_num, line in enumerate(csv_file, 1):
+                    if current_line_num == target_line:
+                        taxonomy = self._parse_catalog_line(line)
+                        return taxonomy
+                        
+            return None
+            
+        except Exception as e:
+            return None
+
+    def _get_taxonomic_label_from_dict(self, taxonomy: Dict[str, str]) -> Optional[str]:
+        """Extract taxonomic label at the specified level with optional strict filtering."""
+        level_map = {
+            'kingdom': 'kingdom',
+            'phylum': 'phylum', 
+            'class': 'class',
+            'order': 'order',
+            'family': 'family',
+            'genus': 'genus',
+            'species': 'species'
+        }
+        
+        if self.taxonomic_level not in level_map:
+            return None
+        
+        field_name = level_map[self.taxonomic_level]
+        label = str(taxonomy.get(field_name, '')).strip()
+        
+        # Basic filtering: always filter empty or obviously invalid labels
+        basic_invalid = ['', 'nan', 'none', 'n/a', 'null']
+        if not label or label.lower() in basic_invalid:
+            return None
+        
+        # Apply strict filtering only if enabled
+        if self.strict_label_filtering:
+            # Strict filtering: Return None for uncertain/confusing/hybrid labels
+            uncertain_indicators = [
+                'unknown', 'sp.', 'confusor', 'confuse', 'uncertain', 'unclear', 'ambiguous',
+                'unidentified', 'unidentifiable', 'indeterminate', 'questionable'
+            ]
+            
+            if label.lower() in uncertain_indicators:
+                return None
+            
+            # Filter hybrid indicators (x species, hybrids)
+            if 'x ' in label.lower() or ' x ' in label.lower():
+                return None
+            
+            # Filter uncertain species indicators
+            if 'sp.' in label or 'spp.' in label:
+                return None
+                
+            # Filter specimens with cf. (compare with), aff. (affinity with) - uncertain ID
+            if 'cf.' in label.lower() or 'aff.' in label.lower():
+                return None
+                
+            # Filter complex species (species complex, species group)
+            if 'complex' in label.lower() or 'group' in label.lower():
+                return None
+                
+            # Filter near/close to (nr./near) indicators
+            if 'nr.' in label.lower() or 'near' in label.lower():
+                return None
+                
+            # Filter subspecies indicators that suggest uncertainty
+            if label.endswith(' ssp.') or ' ssp. ' in label:
+                return None
+                
+            # Additional filters for specific taxonomic levels
+            if self.taxonomic_level == 'species':
+                # For species level, be extra strict
+                # Filter names with numbers (often indicate forms/varieties/uncertain status)
+                if any(char.isdigit() for char in label):
+                    return None
+                    
+                # Filter very short species names (likely incomplete)
+                parts = label.split()
+                if len(parts) < 2:  # Species should have at least genus + species
+                    return None
+                    
+                # Filter if genus or species part contains uncertain indicators
+                for part in parts:
+                    if any(indicator in part.lower() for indicator in ['sp', 'cf', 'aff', 'nr']):
+                        return None
+        
+        return label
+    
+    def _has_full_taxonomy_from_dict(self, taxonomy: Dict[str, str]) -> bool:
+        """Check if taxonomy dict has labels for all major taxonomic levels."""
+        required_fields = ['kingdom', 'phylum', 'class', 'order', 'family', 'genus', 'species']
+        
+        for field in required_fields:
+            value = str(taxonomy.get(field, '')).strip()
+            if not value or value.lower() in ['nan', 'none', 'n/a']:
+                return False
+        
+        return True
+    
+    def _filter_samples_by_class_count(self, samples: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Filters out classes with fewer than min_images_per_class samples."""
+        if self.min_images_per_class <= 1:
+            return samples
+
+        print(f"\n🔍 Filtering classes with less than {self.min_images_per_class} images...")
+        
+        # Count occurrences of each class
+        class_counts = Counter(sample['taxonomic_label'] for sample in samples)
+        
+        # Identify classes to keep
+        classes_to_keep = {
+            label for label, count in class_counts.items() 
+            if count >= self.min_images_per_class
+        }
+        
+        original_count = len(samples)
+        original_class_count = len(class_counts)
+        
+        # Filter the samples
+        filtered_samples = [
+            sample for sample in samples 
+            if sample['taxonomic_label'] in classes_to_keep
+        ]
+        
+        final_class_count = len(classes_to_keep)
+        
+        print(f"✅ Filtering complete.")
+        print(f"  Original classes: {original_class_count}, Final classes: {final_class_count}")
+        print(f"  Original samples: {original_count}, Final samples: {len(filtered_samples)}")
+        
+        return filtered_samples
+
+    def _estimate_total_samples(self) -> int:
+        """Provides an estimated total number of samples for progress bars."""
+        # Based on TreeOfLife-10M, the train split has ~10M samples.
+        # This is a rough estimate for the progress bar.
+        return 10_000_000
+    
+    def _load_huggingface_data_optimized(self) -> List[Dict[str, Any]]:
+        """OPTIMIZED: Load TreeOfLife-10M with smart sampling and memory catalog."""
+        print("📥 Loading TreeOfLife-10M dataset from HuggingFace (OPTIMIZED)...")
+        try:
+            from datasets import load_dataset
+        except ImportError:
+            raise ImportError("HuggingFace datasets library not installed. Run: pip install datasets huggingface_hub")
+        
+        print("⚠️  This may require authentication: huggingface-cli login")
+        
+        dataset_name = "imageomics/TreeOfLife-10M"
+        split_to_load = "train"
+        print(f"🔗 Loading streaming dataset (split: {split_to_load})...")
+        
+        try:
+            dataset = load_dataset(
+                dataset_name,
+                split=split_to_load,
+                streaming=True,
+                cache_dir=self.root_path
+            )
+        except Exception as e:
+            print(f"❌ Failed to load HuggingFace dataset: {e}")
+            return [] # Return empty list on failure
+
+        samples = []
+        processed_count = 0
+        failed_images = []
+        catalog_misses = 0
+        start_time = time.time()
+
+        print("🔍 Processing samples with OPTIMIZED taxonomic lookups...")
+        
+        # Determine target number of samples for the progress bar
+        if self.split == "train_small" and self.split_sample_ids:
+            target_samples = len(self.split_sample_ids)
+            if self.max_samples:
+                target_samples = min(self.max_samples, target_samples)
+            print(f"🎯 Target: {target_samples:,} samples from {len(self.split_sample_ids):,} train_small entries")
+        else:
+            target_samples = self.max_samples or self._estimate_total_samples()
+            if self.max_samples:
+                 print(f"🎯 Target: {self.max_samples} valid samples (scanning up to ~{target_samples:,} total)")
+            else:
+                 print(f"🎯 Processing full dataset (~{target_samples:,} samples)")
+
+        from tqdm import tqdm
+        with tqdm(total=target_samples, desc="Processing samples", unit="sample") as pbar:
+            for sample in dataset:
+                if self.max_samples and len(samples) >= self.max_samples:
+                    print(f"\n🏁 Reached max_samples limit of {self.max_samples}. Stopping.")
+                    break
+
+                sample_id_for_error = 'Unknown'
+                try:
+                    if not isinstance(sample, dict):
+                        print(f"\n⚠️ Skipping non-dict sample of type {type(sample)}")
+                        failed_images.append({'sample_id': 'N/A', 'reason': f'Invalid sample format (not a dict): {type(sample)}'})
+                        continue
+
+                    sample_id = sample.get('treeoflife_id')
+                    if not sample_id:
+                        failed_images.append({'sample_id': 'Unknown', 'reason': 'Missing treeoflife_id'})
+                        continue
+                    
+                    sample_id_for_error = sample_id
+
+                    if self.split_sample_ids and sample_id not in self.split_sample_ids:
+                        continue
+
+                    metadata = self.memory_catalog.get(sample_id)
+                    if metadata is None:
+                        catalog_misses += 1
+                        continue
+
+                    label = metadata.get(self.taxonomic_level)
+                    if not label:
+                        continue
+
+                    image_data = sample.get('image')
+                    if image_data is None:
+                        failed_images.append({'sample_id': sample_id, 'reason': 'Missing image data'})
+                        continue
+
+                    image_bytes = self._compress_image(image_data, sample_id)
+                    if image_bytes is None:
+                        # Error is logged in _compress_image
+                        failed_images.append({'sample_id': sample_id, 'reason': 'Image processing/compression failed'})
+                        continue
+                    
+                    processed_sample = {
+                        "index": processed_count,
+                        "taxonomic_label": label,
+                        "treeoflife_id": sample_id,
+                        "image_bytes": image_bytes,
+                        "metadata": metadata
+                    }
+                    samples.append(processed_sample)
+                    pbar.update(1)
+                    pbar.set_postfix(found=len(samples), failed=len(failed_images), refresh=True)
+
+                except Exception as e:
+                    print(f"\nUnexpected error processing sample ID {sample_id_for_error}: {e}")
+                    failed_images.append({'sample_id': sample_id_for_error, 'reason': str(e)})
+                    continue
+
+                processed_count += 1
+        
+        elapsed_time = time.time() - start_time
+        print(f"\n📊 OPTIMIZED Loading Statistics:")
+        print(f"  ⏱️  Total time: {elapsed_time:.1f}s")
+        print(f"  📝 Samples processed: {processed_count:,}")
+        print(f"  ✅ Valid samples loaded: {len(samples):,}")
+        if elapsed_time > 0:
+            print(f"  🚀 Processing speed: {processed_count/elapsed_time:.1f} samples/sec")
+        print(f"  🖼️  Image loading/processing failures: {len(failed_images):,}")
+        print(f"  📋 Catalog lookup misses: {catalog_misses:,}")
+        
+        if not samples:
+            print("⚠️ No valid samples found, this might indicate data format issues")
+            return []
+        
+        print(f"\n✅ Successfully loaded {len(samples)} valid samples from TreeOfLife-10M")
+        return self._filter_samples_by_class_count(samples)
+    
+    def _process_sample_batch(self, sample_batch: List[Tuple[int, Dict]], failed_images: List[Dict], catalog_misses: int) -> List[Dict[str, Any]]:
+        """OPTIMIZATION: Process samples in batches for better performance."""
+        valid_samples = []
+        
+        for idx, sample in sample_batch:
+            try:
+                sample_info = self._process_hf_sample_optimized(sample, idx, failed_images)
+                if sample_info:
+                    # If filtering by split, skip mismatched
+                    if self.split == "train_small":
+                        if sample_info.get('metadata', {}).get('split') != self.split:
+                            continue
+                    valid_samples.append(sample_info)
+                else:
+                    # Check if it was a catalog miss
+                    sample_id = sample.get('__key__', f'sample_{idx}')
+                    if not self._get_taxonomy_from_catalog_optimized(sample_id):
+                        catalog_misses += 1
+                        
+            except Exception as e:
+                if idx < 10:  # Show details for first few errors
+                    print(f"⚠️ Critical error processing sample {idx}: {e}")
+                continue
+        
+        return valid_samples
+    
+    def _compress_image(self, image: Any, sample_id: str) -> Optional[bytes]:
+        """
+        Compresses a PIL image or image bytes into JPEG format.
+        Handles corrupt images and logs errors.
+        """
+        try:
+            if not isinstance(image, Image.Image):
+                # Assuming it's bytes, try to open it
+                if hasattr(image, 'read'):
+                    image_bytes = image.read()
+                    image = Image.open(io.BytesIO(image_bytes))
+                else:
+                    # If it's not a file-like object, we can't process it
+                    print(f"⚠️ Skipping sample {sample_id}: Invalid image type {type(image)}")
+                    return None
+
+            # Check for excessively large images before processing
+            width, height = image.size
+            if width * height > 100_000_000: # 100 megapixels limit
+                print(f"⚠️ Skipping sample {sample_id}: Image too large ({width}x{height})")
+                return None
+
+            # Convert to RGB if necessary
+            if image.mode in ['RGBA', 'LA', 'P']:
+                image = image.convert('RGB')
+            
+            # Save to in-memory bytes buffer
+            bytes_io = io.BytesIO()
+            image.save(bytes_io, format='JPEG', quality=85, optimize=True)
+                       return bytes_io.getvalue()
+
+        except (UnidentifiedImageError, OSError, IOError) as e:
+            # More specific error logging for corrupt images
+            if "not a TIFF file" in str(e):
+                print(f"⚠️ Corrupt TIFF image skipped (ID: {sample_id}). Error: {e}")
+            else:
+                print(f"⚠️ Corrupt image skipped (ID: {sample_id}). Error: {e}")
+            return None
+        except Exception as e:
+            print(f"⚠️ Unexpected error compressing image for sample {sample_id}: {e}")
+            return None
+
+    def _process_hf_sample_optimized(self, sample: Dict[str, Any], idx: int, failed_images: List[Dict[str, str]]) -> Optional[Dict[str, Any]]:
+        """OPTIMIZED: Process a single sample with optimized catalog lookup."""
+        try:
+            sample_id = sample.get('__key__', f'sample_{idx}')
+            sample_url = sample.get('__url__', '')
+            
+            # For train_small with smart sampling, skip non-target samples early
+            if (self.split == "train_small" and self.split_sample_ids and 
+                sample_id not in self.split_sample_ids):
+                return None
+            
+            # Extract image from TreeOfLife-10M format
+            image_data = sample.get('jpg')
+            if image_data is None:
+                failed_images.append({
+                    'sample_id': sample_id,
+                    'reason': 'No jpg field found',
+                    'url': sample_url
+                })
+                return None
+
+            # Process and store only compressed image bytes for true streaming
+            image_bytes = self._compress_image(image_data, sample_id)
+            if image_bytes is None:
+                failed_images.append({
+                    'sample_id': sample_id,
+                    'reason': 'Image compression/processing failed',
+                    'url': sample_url
+                })
+                return None
+            
+            # OPTIMIZED: Use memory catalog for ultra-fast lookup
+            taxonomy = self._get_taxonomy_from_catalog_optimized(sample_id)
+            
+            if not taxonomy:
+                return None
+            
+            # Extract taxonomic label at specified level
+            taxonomic_label = self._get_taxonomic_label_from_dict(taxonomy)
+            if not taxonomic_label:
+                return None
+            
+            # Skip if excluding partial labels and sample doesn't have full taxonomy
+            if self.exclude_partial_labels and not self._has_full_taxonomy_from_dict(taxonomy):
+                return None
+                
+            sample_info = {
+                'index': idx,
+                'taxonomic_label': taxonomic_label,
+                'common_name': taxonomy.get('common', ''),
+                'scientific_name': taxonomy.get('species', ''),
+                'treeoflife_id': sample_id,
+                'metadata': taxonomy,
+                'image_source': {
+                    'type': 'compressed_bytes',
+                    'image_bytes': image_bytes,
+                    'sample_id': sample_id,
+                }
+            }
+            
+            return sample_info
+            
+        except Exception as e:
+            return None
+    
+    def _get_taxonomy_from_catalog_optimized(self, sample_id: str) -> Optional[Dict[str, str]]:
+        """OPTIMIZED: Ultra-fast taxonomy lookup using memory catalog."""
+        # OPTIMIZATION 1: Use memory catalog if available (for train_small)
+        if self.memory_catalog and sample_id in self.memory_catalog:
+            return self.memory_catalog[sample_id]
+        
+        # OPTIMIZATION 2: Use larger in-memory cache
+        if sample_id in self.catalog_cache:
+            return self.catalog_cache[sample_id]
+        
+        # Fallback to original method for samples not in memory catalog
+        taxonomy = self._get_taxonomy_from_catalog_original(sample_id)
+        
+        # Add to cache with larger size
+        if taxonomy and len(self.catalog_cache) < self.catalog_cache_size:
+            self.catalog_cache[sample_id] = taxonomy
+        elif taxonomy and len(self.catalog_cache) >= self.catalog_cache_size:
+            # Remove 25% of cache when full (keep more entries)
+            keys_to_remove = list(self.catalog_cache.keys())[:self.catalog_cache_size//4]
+            for key in keys_to_remove:
+                del self.catalog_cache[key]
+            self.catalog_cache[sample_id] = taxonomy
+        
+        return taxonomy
+    
+    def _get_taxonomy_from_catalog_original(self, sample_id: str) -> Optional[Dict[str, str]]:
+        """Original catalog lookup method as fallback."""
+        if not hasattr(self, 'index_path') or not os.path.exists(self.index_path):
+            return None
+        
+        try:
+            # Search index file for line number
+            target_line = None
+            with open(self.index_path, 'r') as index_file:
+                for line in index_file:
+                    if line.startswith(f"{sample_id}:"):
+                        target_line = int(line.split(':')[1].strip())
+                        break
+            
+            if target_line is None:
+                return None
+            
+            # Read specific line from catalog
+            with open(self.catalog_path, 'r', encoding='utf-8') as csv_file:
+                for current_line_num, line in enumerate(csv_file, 1):
+                    if current_line_num == target_line:
+                        taxonomy = self._parse_catalog_line(line)
+                        return taxonomy
+                        
+            return None
+            
+        except Exception as e:
+            return None
+
+    def _get_taxonomic_label_from_dict(self, taxonomy: Dict[str, str]) -> Optional[str]:
+        """Extract taxonomic label at the specified level with optional strict filtering."""
+        level_map = {
+            'kingdom': 'kingdom',
+            'phylum': 'phylum', 
+            'class': 'class',
+            'order': 'order',
+            'family': 'family',
+            'genus': 'genus',
+            'species': 'species'
+        }
+        
+        if self.taxonomic_level not in level_map:
+            return None
+        
+        field_name = level_map[self.taxonomic_level]
+        label = str(taxonomy.get(field_name, '')).strip()
+        
+        # Basic filtering: always filter empty or obviously invalid labels
+        basic_invalid = ['', 'nan', 'none', 'n/a', 'null']
+        if not label or label.lower() in basic_invalid:
+            return None
+        
+        # Apply strict filtering only if enabled
+        if self.strict_label_filtering:
+            # Strict filtering: Return None for uncertain/confusing/hybrid labels
+            uncertain_indicators = [
+                'unknown', 'sp.', 'confusor', 'confuse', 'uncertain', 'unclear', 'ambiguous',
+                'unidentified', 'unidentifiable', 'indeterminate', 'questionable'
+            ]
+            
+            if label.lower() in uncertain_indicators:
+                return None
+            
+            # Filter hybrid indicators (x species, hybrids)
+            if 'x ' in label.lower() or ' x ' in label.lower():
+                return None
+            
+            # Filter uncertain species indicators
+            if 'sp.' in label or 'spp.' in label:
+                return None
+                
+            # Filter specimens with cf. (compare with), aff. (affinity with) - uncertain ID
+            if 'cf.' in label.lower() or 'aff.' in label.lower():
+                return None
+                
+            # Filter complex species (species complex, species group)
+            if 'complex' in label.lower() or 'group' in label.lower():
+                return None
+                
+            # Filter near/close to (nr./near) indicators
+            if 'nr.' in label.lower() or 'near' in label.lower():
+                return None
+                
+            # Filter subspecies indicators that suggest uncertainty
+            if label.endswith(' ssp.') or ' ssp. ' in label:
+                return None
+                
+            # Additional filters for specific taxonomic levels
+            if self.taxonomic_level == 'species':
+                # For species level, be extra strict
+                # Filter names with numbers (often indicate forms/varieties/uncertain status)
+                if any(char.isdigit() for char in label):
+                    return None
+                    
+                # Filter very short species names (likely incomplete)
+                parts = label.split()
+                if len(parts) < 2:  # Species should have at least genus + species
+                    return None
+                    
+                # Filter if genus or species part contains uncertain indicators
+                for part in parts:
+                    if any(indicator in part.lower() for indicator in ['sp', 'cf', 'aff', 'nr']):
+                        return None
+        
+        return label
+    
+    def _has_full_taxonomy_from_dict(self, taxonomy: Dict[str, str]) -> bool:
+        """Check if taxonomy dict has labels for all major taxonomic levels."""
+        required_fields = ['kingdom', 'phylum', 'class', 'order', 'family', 'genus', 'species']
+        
+        for field in required_fields:
+            value = str(taxonomy.get(field, '')).strip()
+            if not value or value.lower() in ['nan', 'none', 'n/a']:
+                return False
+        
+        return True
+    
+    def _filter_samples_by_class_count(self, samples: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Filters out classes with fewer than min_images_per_class samples."""
+        if self.min_images_per_class <= 1:
+            return samples
+
+        print(f"\n🔍 Filtering classes with less than {self.min_images_per_class} images...")
+        
+        # Count occurrences of each class
+        class_counts = Counter(sample['taxonomic_label'] for sample in samples)
+        
+        # Identify classes to keep
+        classes_to_keep = {
+            label for label, count in class_counts.items() 
+            if count >= self.min_images_per_class
+        }
+        
+        original_count = len(samples)
+        original_class_count = len(class_counts)
+        
+        # Filter the samples
+        filtered_samples = [
+            sample for sample in samples 
+            if sample['taxonomic_label'] in classes_to_keep
+        ]
+        
+        final_class_count = len(classes_to_keep)
+        
+        print(f"✅ Filtering complete.")
+        print(f"  Original classes: {original_class_count}, Final classes: {final_class_count}")
+        print(f"  Original samples: {original_count}, Final samples: {len(filtered_samples)}")
+        
+        return filtered_samples
+
+    def _estimate_total_samples(self) -> int:
+        """Provides an estimated total number of samples for progress bars."""
+        # Based on TreeOfLife-10M, the train split has ~10M samples.
+        # This is a rough estimate for the progress bar.
+        return 10_000_000
