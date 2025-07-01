@@ -111,6 +111,8 @@ HuggingFace __key__:       aa563519-6d97-47c3-bcda-c72cdf19a1bf
 - ❌ Cannot select exact splits
 - ❌ Not suitable for any research or benchmarking
 
+**Note**: Streaming mode does not require downloading `catalog.csv`. It operates independently of the catalog file.
+
 ## ✅ Correct Solutions
 
 ### Understanding the Limitation

@@ -319,6 +319,13 @@ class TreeOfLifeAdapter(BaseDatasetAdapter):
         except ImportError:
             raise ImportError("Please install datasets: pip install datasets")
         
+        # For streaming mode, we'll use sequential sampling for speed
+        # Random sampling is too slow with streaming datasets
+        target_size = self.max_samples or 10000  # Default to 10K for experiments
+        
+        print(f"🎯 Loading first {target_size:,} samples (sequential, not from specific split)")
+        print("⚡ Using sequential sampling for better performance")
+        
         # Load streaming dataset
         dataset = load_dataset(
             "imageomics/TreeOfLife-10M",
@@ -327,77 +334,64 @@ class TreeOfLifeAdapter(BaseDatasetAdapter):
             cache_dir=str(self.root_path)
         )
         
-        # Determine target size
-        split_sizes = {
-            'train': 9_533_174,
-            'train_small': 953_202,
-            'val': 501_656
-        }
-        target_size = split_sizes.get(self.split, 953_202)
-        if self.max_samples:
-            target_size = min(self.max_samples, target_size)
-        
-        # Sample from dataset
         samples = []
-        processed = 0
+        errors = 0
         
         from tqdm import tqdm
-        pbar = tqdm(total=target_size, desc=f"Sampling {self.split}")
+        pbar = tqdm(total=target_size, desc="Loading samples")
         
-        # Use deterministic sampling for reproducibility
-        import random
-        random.seed(42)
-        sampling_rate = target_size / 10_988_032  # Total dataset size
-        
-        for sample in dataset:
-            processed += 1
-            
-            # Sample based on rate
-            if random.random() > sampling_rate:
-                continue
+        # Take first N valid samples - much faster than random sampling
+        for i, sample in enumerate(dataset):
+            if len(samples) >= target_size:
+                break
             
             try:
                 # Get image
                 image = sample.get("jpg") or sample.get("image")
                 if not image:
+                    errors += 1
                     continue
                 
-                # Convert to bytes if needed
+                # Convert to bytes efficiently
                 if hasattr(image, "save"):
                     import io
                     buffer = io.BytesIO()
-                    image.save(buffer, format="JPEG")
+                    # Use lower quality for faster processing
+                    image.save(buffer, format="JPEG", quality=85)
                     image_bytes = buffer.getvalue()
                 else:
                     image_bytes = image
                 
-                # Create placeholder metadata
-                # In streaming mode, we can't match with catalog
-                placeholder_label = f"class_{len(samples) % 1000}"
+                # Create placeholder label
+                # Use reasonable number of classes for experiments
+                num_placeholder_classes = 100
+                class_idx = len(samples) % num_placeholder_classes
+                placeholder_label = f"class_{class_idx:03d}"
                 
                 samples.append({
                     "index": len(samples),
                     "taxonomic_label": placeholder_label,
-                    "treeoflife_id": sample.get("__key__", f"sample_{processed}"),
+                    "treeoflife_id": sample.get("__key__", f"sample_{i}"),
                     "image_bytes": image_bytes,
                     "image_path": None,
-                    "metadata": {"streaming": True}
+                    "metadata": {"streaming": True, "hf_index": i}
                 })
                 
                 pbar.update(1)
                 
-                if len(samples) >= target_size:
-                    break
-                    
             except Exception as e:
-                if processed < 10:
-                    print(f"Error: {e}")
+                errors += 1
+                if errors <= 5:
+                    print(f"\n⚠️ Error: {str(e)[:50]}")
                 continue
         
         pbar.close()
         
-        print(f"✅ Sampled {len(samples):,} images")
-        print("⚠️  Using placeholder labels - for accurate labels use 'local' or 'webdataset' mode")
+        print(f"\n✅ Loaded {len(samples):,} samples")
+        if errors > 0:
+            print(f"❌ Skipped {errors:,} samples due to errors")
+        print(f"🏷️  Using {num_placeholder_classes} placeholder classes")
+        print("\n⚠️  Remember: These are the first N samples, not a specific split!")
         
         return samples
     

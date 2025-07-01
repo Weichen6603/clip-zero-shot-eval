@@ -259,42 +259,46 @@ def download_random_subset(root_path: str, num_samples: int, split_name: str = "
 
 
 def download_catalog_only(root_path: str):
-    """Download only the catalog.csv file."""
+    """
+    Download only the catalog.csv file. If already exists, notify user and perform data check.
+    """
     root_path = Path(root_path)
     catalog_path = root_path / "metadata" / "catalog.csv"
-    
+
+    # If catalog already exists, notify and continue to data check
     if catalog_path.exists():
         print(f"✅ Catalog already exists at {catalog_path}")
-        return catalog_path
-    
-    print("📥 Downloading catalog.csv...")
-    catalog_path.parent.mkdir(parents=True, exist_ok=True)
-    
+        print("🔎 Performing quick data check, please wait...")
+    else:
+        print("📥 Downloading catalog.csv...")
+        catalog_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            from huggingface_hub import hf_hub_download
+            downloaded = hf_hub_download(
+                repo_id="imageomics/TreeOfLife-10M",
+                filename="metadata/catalog.csv",
+                cache_dir=str(root_path / "cache"),
+                repo_type="dataset"
+            )
+            import shutil
+            shutil.copy(downloaded, catalog_path)
+            print(f"✅ Catalog saved to {catalog_path}")
+            print("🔎 Performing quick data check, please wait...")
+        except Exception as e:
+            print(f"❌ Failed to download catalog: {e}")
+            raise
+
+    # Data check: show split statistics
     try:
-        from huggingface_hub import hf_hub_download
-        
-        downloaded = hf_hub_download(
-            repo_id="imageomics/TreeOfLife-10M",
-            filename="metadata/catalog.csv",
-            cache_dir=str(root_path / "cache"),
-            repo_type="dataset"
-        )
-        
-        import shutil
-        shutil.copy(downloaded, catalog_path)
-        print(f"✅ Catalog saved to {catalog_path}")
-        
-        # Show split information
-        df = pd.read_csv(catalog_path)
+        import pandas as pd
+        df = pd.read_csv(catalog_path, dtype=str, low_memory=False)
         print("\n📊 Dataset splits in catalog:")
         for split, count in df['split'].value_counts().items():
             print(f"  {split}: {count:,} images")
-        
-        return catalog_path
-        
     except Exception as e:
-        print(f"❌ Failed to download catalog: {e}")
-        raise
+        print(f"❌ Failed to read catalog for data check: {e}")
+
+    return catalog_path
 
 
 def main():
@@ -393,9 +397,10 @@ Examples:
         download_catalog_only(args.root_path)
     
     if args.catalog_only:
-        # Already downloaded above
-        pass
-    
+        # Ensure catalog is downloaded and perform data check
+        download_catalog_only(args.root_path)
+        return  # Exit after catalog processing
+
     if args.analyze:
         can_match = analyze_id_matching(args.root_path)
         if not can_match:

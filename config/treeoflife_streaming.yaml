@@ -41,7 +41,7 @@ datasets:
     type: "treeoflife"
     
     # Data location and mode
-    root_path: "./data/treeoflife_cache"  # Only for caching catalog
+    root_path: "./data/treeoflife"  # Only for caching catalog
     mode: "streaming"  # Force streaming mode
     
     # Dataset split (note: limited accuracy due to ID mismatch)

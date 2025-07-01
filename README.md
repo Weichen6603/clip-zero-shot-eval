@@ -133,6 +133,8 @@ python evaluate_clip.py config/treeoflife_webdataset.yaml
 - Requires HuggingFace authentication: `huggingface-cli login`
 - Streaming mode uses placeholder labels due to ID mismatch
 - For accurate results, use WebDataset or Local mode
+- Due to the large size of the dataset, local and WebDataset modes have not been fully tested. The provided code and usage instructions are for reference only.
+- Streaming mode is recommended for quick visualization and experimentation.
 
 📖 **[See the complete TreeOfLife-10M guide](./docs/treeoflife.md)** for detailed setup instructions, configuration options, and best practices.
 
