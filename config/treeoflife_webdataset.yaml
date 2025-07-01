@@ -1,0 +1,110 @@
+# TreeOfLife-10M WebDataset Configuration
+# This configuration uses pre-built WebDataset shards for efficient loading
+# Recommended for: Production use, large-scale experiments, best performance
+
+# Model configuration
+clip_model: "ViT-B/32"  # Options: RN50, RN101, RN50x4, RN50x16, ViT-B/32, ViT-B/16, ViT-L/14
+device: "cuda"          # Options: cuda, cpu
+use_ensemble: true      # Whether to use multiple text templates for ensemble
+
+# Advanced model options
+# fp16: true            # Use mixed precision for faster inference
+# model_cache_dir: "./models"  # Directory to cache downloaded models
+
+# Evaluation settings
+batch_size: 128         # Batch size for evaluation (adjust based on GPU memory)
+num_workers: 8          # Number of data loading workers
+save_predictions: false # Save individual predictions (generates large files)
+
+# Advanced evaluation options
+# pin_memory: true      # Pin memory for faster GPU transfer
+# prefetch_factor: 2    # Number of batches to prefetch
+# persistent_workers: true  # Keep workers alive between epochs
+
+# Output settings
+output_dir: "./results/treeoflife_webdataset"
+save_results: true
+# save_embeddings: false     # Save image embeddings for analysis
+# save_per_class_results: true  # Save detailed per-class metrics
+# save_confusion_matrix: false  # Save confusion matrix (can be very large)
+
+# Logging and monitoring
+# verbose: true              # Enable verbose logging
+# log_interval: 100          # Log progress every N batches
+# tensorboard_logging: false # Enable TensorBoard logging
+# wandb_project: "treeoflife"  # Weights & Biases project name
+# wandb_run_name: null       # W&B run name (auto-generated if null)
+
+# Dataset configuration
+datasets:
+  - name: "TreeOfLife-10M-WebDataset"
+    type: "treeoflife"
+    
+    # Data location and mode
+    root_path: "./data/treeoflife"
+    mode: "webdataset"  # Force WebDataset mode
+    
+    # Dataset split
+    split: "train_small"  # Options: train (~9.5M), train_small (~953K), val (~502K), test
+    # split: "train"      # Uncomment for full dataset (requires significant resources)
+    
+    # Sampling options
+    max_samples: null     # null for all samples, or specify a number to limit
+    # max_samples: 10000  # Uncomment to use only 10K samples for testing
+    
+    # Taxonomic classification settings
+    taxonomic_level: "species"  # Options: species, genus, family, order, class, phylum, kingdom
+    # taxonomic_level: "genus"  # Uncomment for fewer classes (faster evaluation)
+    # taxonomic_level: "family" # Even fewer classes
+    
+    # Class filtering
+    min_images_per_class: 5   # Minimum images required per class
+    # min_images_per_class: 1  # Uncomment to include all classes
+    # min_images_per_class: 10 # Uncomment for only well-represented classes
+    
+    # Label quality control
+    exclude_partial_labels: false  # Exclude samples without complete taxonomy
+    strict_label_filtering: false  # Apply strict filtering for uncertain labels
+    # exclude_partial_labels: true  # Uncomment for higher quality dataset
+    # strict_label_filtering: true  # Uncomment to exclude sp., cf., aff. labels
+    
+    # WebDataset specific options
+    # shuffle_buffer: 10000      # Size of shuffle buffer for WebDataset
+    # shard_shuffle: true        # Shuffle shards before reading
+    # resampling: false          # Enable resampling for infinite iteration
+    
+    # Performance optimization
+    # cache_size: 100000         # Number of samples to cache in memory
+    # decode_threads: 4          # Number of threads for image decoding
+    # batched_decode: true       # Decode images in batches
+    
+    # Distributed training support (multi-GPU)
+    # distributed: false         # Enable distributed processing
+    # world_size: 1             # Number of distributed processes
+    # rank: 0                   # Rank of current process
+    # dist_backend: "nccl"      # Distributed backend
+
+# Custom text templates (optional)
+# custom_templates:
+#   - "a photo of a {}."
+#   - "a photo of the {}."
+#   - "an image of {}."
+#   - "a picture of {}."
+#   - "a photograph of a {} specimen."
+#   - "a {} in its natural habitat."
+#   - "this is a {}."
+#   - "a wild {}."
+#   - "the {} species."
+
+# Data augmentation (for training, not evaluation)
+# augmentation:
+#   resize: 224
+#   center_crop: 224
+#   normalize_mean: [0.48145466, 0.4578275, 0.40821073]
+#   normalize_std: [0.26862954, 0.26130258, 0.27577711]
+
+# Checkpoint and recovery
+# checkpoint_dir: "./checkpoints"
+# checkpoint_interval: 10000   # Save checkpoint every N samples
+# resume_from_checkpoint: false
+# checkpoint_path: null        # Path to specific checkpoint to resume from

@@ -1,0 +1,123 @@
+# TreeOfLife-10M Local Files Configuration
+# This configuration uses locally extracted image files with catalog.csv
+# Recommended for: Development, debugging, custom data processing
+
+# Model configuration
+clip_model: "ViT-B/32"  # Options: RN50, RN101, RN50x4, RN50x16, ViT-B/32, ViT-B/16, ViT-L/14
+device: "cuda"          # Options: cuda, cpu
+use_ensemble: true      # Whether to use multiple text templates for ensemble
+
+# Advanced model options
+# fp16: false           # Mixed precision (may cause issues with some operations)
+# model_cache_dir: "./models"  # Directory to cache downloaded models
+
+# Evaluation settings
+batch_size: 64          # Smaller batch size for local file loading
+num_workers: 4          # Fewer workers to avoid file system bottleneck
+save_predictions: true  # Save predictions for analysis
+
+# Advanced evaluation options
+# pin_memory: true      # Pin memory for faster GPU transfer
+# prefetch_factor: 2    # Number of batches to prefetch
+# persistent_workers: false  # May cause issues with file handles
+
+# Output settings
+output_dir: "./results/treeoflife_local"
+save_results: true
+# save_embeddings: true      # Easier to save embeddings with local files
+# save_per_class_results: true  # Save detailed per-class metrics
+# save_confusion_matrix: true   # Save confusion matrix for analysis
+
+# Logging and monitoring
+verbose: true           # Recommended for debugging
+# log_interval: 50           # More frequent logging for smaller datasets
+# tensorboard_logging: true  # Enable TensorBoard logging
+# wandb_project: "treeoflife-dev"  # Weights & Biases project
+# wandb_run_name: null       # W&B run name
+
+# Dataset configuration
+datasets:
+  - name: "TreeOfLife-10M-Local"
+    type: "treeoflife"
+    
+    # Data location and mode
+    root_path: "./data/treeoflife"
+    mode: "local"  # Force local file mode
+    
+    # Images directory (default: root_path/images)
+    # images_dir: "./data/treeoflife/images"  # Custom images directory
+    # images_dir: "/mnt/ssd/treeoflife/images"  # Example: SSD for faster loading
+    
+    # Dataset split
+    split: "train_small"  # Options: train, train_small, val, test
+    # split: "val"        # Uncomment for validation set
+    
+    # Sampling options  
+    max_samples: null     # null for all samples in split
+    # max_samples: 1000   # Uncomment for quick testing
+    # max_samples: 50000  # Uncomment for medium-scale experiments
+    
+    # Random sampling
+    # random_subset: true    # Take random subset instead of first N
+    # random_seed: 42        # Seed for reproducible sampling
+    
+    # Taxonomic classification settings
+    taxonomic_level: "species"  # Options: species, genus, family, order, class, phylum, kingdom
+    # taxonomic_level: "genus"   # Fewer classes for faster experimentation
+    # taxonomic_level: "family"  # Good for initial testing
+    
+    # Class filtering
+    min_images_per_class: 3    # Lower threshold for local experiments
+    # min_images_per_class: 1   # Include all classes
+    # min_images_per_class: 10  # Only well-represented classes
+    
+    # Label quality control
+    exclude_partial_labels: false  # Keep all samples for development
+    strict_label_filtering: false  # Disable strict filtering
+    # exclude_partial_labels: true  # Uncomment for cleaner dataset
+    # strict_label_filtering: true  # Uncomment to exclude uncertain labels
+    
+    # Local file options
+    # image_extensions: [".jpg", ".jpeg", ".png"]  # Supported image formats
+    # verify_images: true        # Verify image files can be opened
+    # skip_corrupted: true       # Skip corrupted images instead of failing
+    # image_backend: "PIL"       # Options: PIL, cv2
+    
+    # Catalog options
+    # catalog_path: "./data/treeoflife/metadata/catalog.csv"  # Custom catalog path
+    # catalog_encoding: "utf-8"  # Catalog file encoding
+    # catalog_separator: ","     # CSV separator
+    
+    # Memory optimization
+    # load_images_on_demand: true  # Don't preload all images
+    # cache_images: false          # Don't cache decoded images in memory
+    # max_image_size: [4096, 4096] # Maximum image dimensions
+    
+    # Preprocessing (applied after loading)
+    # resize_mode: "shortest"      # Options: shortest, longest, exact
+    # target_size: 256            # Resize target
+    # center_crop_size: 224       # Center crop after resize
+
+# Custom text templates (optional)
+# custom_templates:
+#   - "a photo of a {}, a type of organism."
+#   - "a specimen of {} from the tree of life."
+#   - "this organism is classified as {}."
+#   - "an example of {} species."
+#   - "biological sample showing {}."
+
+# Debug options (useful for local development)
+# debug:
+#   save_sample_images: true     # Save sample images for inspection
+#   sample_count: 100            # Number of samples to save
+#   print_label_distribution: true  # Print class distribution
+#   validate_taxonomy: true      # Check taxonomy consistency
+#   report_missing_images: true  # Report all missing images
+
+# Performance profiling
+# profiling:
+#   enabled: false
+#   profile_dataloader: true
+#   profile_model: true
+#   save_profile: true
+#   profile_output: "./profiles/local_profile.json"

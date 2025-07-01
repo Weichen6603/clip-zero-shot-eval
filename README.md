@@ -108,17 +108,51 @@ python evaluate.py config/visual_genome.yaml
 - **Classes**: 2000+ unique object types in rich visual scenes
 - **Image loading supports HuggingFace streaming mode (recommended)**
 
-#### TreeOfLife-10M (454K+ biological taxa, lightweight testing)
-```bash
-# Lightweight testing (recommended - use official train_small split, ~265GB)
-python evaluate.py config/treeoflife.yaml
+#### TreeOfLife-10M (Biological Taxa Classification)
 
-# Full dataset version (all data, ~3TB)
-python evaluate.py config/treeoflife_full.yaml
+> ⚠️ **Warning**  
+> Due to the large size of the dataset, local and WebDataset modes have not been tested. The provided code and usage instructions are for reference only. Streaming mode is recommended for quick visualization and experimentation.
+
+TreeOfLife-10M is the largest ML-ready biological dataset with 10+ million images covering 454,000+ taxa. We provide flexible configuration options to accommodate different use cases and resource constraints.
+
+```bash
+# Quick start with streaming mode (no download required)
+python evaluate_clip.py config/treeoflife_streaming.yaml
+
+# Development with local files
+python evaluate_clip.py config/treeoflife_local.yaml
+
+# Production with WebDataset (best performance)
+python evaluate_clip.py config/treeoflife_webdataset.yaml
 ```
-- **Dataset**: TreeOfLife-10M via HuggingFace 
-- **Classes**: 454,000+ taxa across the entire tree of life (configurable taxonomic level)
-- **Image loading supports HuggingFace streaming mode (recommended)**
+
+**Key Features**:
+- **Three Loading Modes**: WebDataset (production), Local (development), Streaming (quick start)
+- **Flexible Scale**: From 10K samples (testing) to 10M+ images (full dataset)
+- **Configurable Taxonomy**: Choose classification level from species to kingdom
+- **Smart Data Loading**: Efficient memory usage with multiple backend options
+
+**Important Notes**:
+- Requires HuggingFace authentication: `huggingface-cli login`
+- Streaming mode uses placeholder labels due to ID mismatch
+- For accurate results, use WebDataset or Local mode
+
+📖 **[See the complete TreeOfLife-10M guide](./docs/treeoflife.md)** for detailed setup instructions, configuration options, and best practices.
+
+**Quick Configuration Examples**:
+```yaml
+# For testing (streaming mode, 10K samples)
+mode: "streaming"
+max_samples: 10000
+
+# For development (local files, train_small)
+mode: "local"  
+split: "train_small"
+
+# For production (WebDataset, full performance)
+mode: "webdataset"
+split: "train_small"  # or "train" for full dataset
+```
 
 ### Custom Configuration
 
@@ -322,112 +356,9 @@ Monitor your system resources and adjust:
   - **Memory Usage**: Low (thanks to lazy loading implementation)
 - **Memory Optimization**: The adapter uses true lazy loading - only sample indices are kept in memory, with images and labels loaded on-demand and cached using LRU strategy
 
-#### TreeOfLife-10M (Two Configuration Options)
 
-TreeOfLife-10M is the largest ML-ready biological dataset with 10+ million images covering 454,000+ taxa. Due to its massive size (~3TB), we provide two configuration options:
-
-##### Option 1: Lightweight Version (Recommended for Testing)
-- **Configuration File**: `config/treeoflife.yaml`
-- **Dataset Size**: ~265GB (official `train_small` split, 953K images)
-- **Use Case**: Algorithm development, quick testing, CI/CD
-
-```bash
-python evaluate.py config/treeoflife.yaml
-```
-
-**Features**:
-- Uses official `train_small` split for efficient testing
-- Perfect for rapid prototyping and testing
-- Requires HuggingFace authentication: `huggingface-cli login`
-- **Ultra-fast taxonomy lookup**: The adapter loads the entire `catalog.csv` (taxonomic metadata, ~1.5GB) into memory as a pandas DataFrame for O(1) sample-to-taxonomy mapping. This enables extremely fast and scalable evaluation, at the cost of moderate RAM usage (typically 2-3GB peak for catalog; images are still streamed/lazy loaded).
-
-##### Option 2: Full Dataset Version (Research Quality)
-- **Configuration File**: `config/treeoflife_full.yaml`
-- **Dataset Size**: ~3TB (all data, ~9.5M images)
-- **Evaluation Time**: Days to weeks
-- **Use Case**: Research publications, comprehensive evaluation
-
-```bash
-python evaluate.py config/treeoflife_full.yaml
-```
-
-**Features**:
-- Complete TreeOfLife-10M dataset (10+ million images)
-- All 454,000+ taxa available
-- Suitable for publication-quality research
-- Requires HuggingFace authentication: `huggingface-cli login`
-- **Ultra-fast taxonomy lookup**: Same as above; catalog.csv is loaded fully into memory for all samples.
-
-##### Authentication Setup
-
-Before using TreeOfLife-10M, you need to authenticate with HuggingFace:
-
-```bash
-# Install HuggingFace CLI
-pip install huggingface_hub
-
-# Login to HuggingFace
-huggingface-cli login
-```
-
-##### Common Features (Both Versions)
-- **Classes**: 454,000+ taxa across the entire tree of life (configurable by taxonomic level)
-- **Source**: TreeOfLife-10M via HuggingFace (iNaturalist21, BIOSCAN-1M, Encyclopedia of Life)
-- **Authentication**: Requires HuggingFace login for dataset access
-- **Usage**: `type: "treeoflife"`
-- **Features**:
-  - **Streaming Data Loading**: Images are streamed from HuggingFace for memory efficiency; only taxonomy metadata is fully loaded into RAM.
-  - **Configurable Taxonomy**: Choose classification level from species to kingdom
-  - **Multi-source Data**: Combines expert-labeled museum specimens, field photos, and curated images
-  - **Biological Diversity**: Covers animals, plants, fungi, and microorganisms
-  - **Configurable label filtering**: By default, only empty/null labels are filtered. You can enable strict filtering of uncertain/confusing/hybrid labels (e.g., `confusor`, `sp.`, `x`, `unknown`) by setting `strict_label_filtering: true` in your config to ensure scientific validity and reproducibility.
-
----
-
-### TreeOfLife-10M Data Loading, Catalog Indexing, and Memory Usage
-
-- **Catalog Table (`catalog.csv`)**: On first run, the full catalog file is always downloaded locally (to the directory specified by `root_path`).
-  - The adapter uses an ultra-lightweight text index, mapping each `sample_id` to its line number in the CSV for fast taxonomy lookup with minimal memory usage.
-
-- **Image Data**: Images are processed using HuggingFace's streaming mode with **true on-demand memory management**.
-  - During initial loading: Images are downloaded from HuggingFace, compressed to JPEG format (quality=85), and stored as compressed bytes in memory. Original image objects are immediately released.
-  - During evaluation: Each compressed image is decoded to PIL Image only when accessed in `__getitem__`, processed/transformed, converted to tensor, then immediately garbage collected.
-  - **True streaming behavior**: No image data persists in memory between accesses. Each image is decoded fresh from compressed bytes when needed, ensuring constant memory usage regardless of dataset size.
-  - Memory footprint: ~50-90% reduction compared to storing uncompressed images, with fast decode times from compressed bytes.
-  - This approach enables processing unlimited dataset sizes (full ~953K train_small or ~10M full dataset) with **predictable, constant memory usage**.
-
-- **Advantages**:
-  - **Memory efficiency**: True streaming with compressed storage enables processing massive datasets on modest hardware
-  - **Predictable resource usage**: Constant memory footprint regardless of dataset size (train_small ~953K or full ~10M images)
-  - **Fast taxonomy lookup**: Ultra-lightweight text indexing for O(1) sample-to-taxonomy mapping
-  - **Configurable quality**: Strict label filtering optional for research vs. general use
-
-- **Memory Usage Summary**:
-  - **Catalog metadata**: ~100-200MB (text index) vs ~1.5-3GB (full pandas DataFrame)
-  - **Image storage**: ~50-90% compression ratio (JPEG bytes vs uncompressed)
-  - **Runtime memory**: Single image in memory at a time during evaluation
-  - **Total footprint**: Constant ~500MB-1GB regardless of dataset size
-
-- **Notes**:
-  - The ultra-lightweight text index is built only once and reused for future runs.
-  - If you run out of RAM when loading the catalog, the adapter will automatically fall back to the text index, but evaluation will be slower.
-  - For full local image access, set `streaming=False` (not recommended except for special use cases).
-
-##### Configuration Parameters (Both Versions)
-```yaml
-- name: "TreeOfLife-10M"
-  type: "treeoflife"
-  root_path: "/mnt/d/data/treeoflife"   # Cache directory for HuggingFace datasets
-  split: "train"                        # TreeOfLife-10M only has 'train' split
-  
-  # Taxonomic configuration
-  taxonomic_level: "species"            # species, genus, family, order, class, phylum, kingdom
-  exclude_partial_labels: false        # Filter samples without full taxonomy
-  strict_label_filtering: false        # Enable strict filtering of uncertain/confusing labels (default: false)
-  
-  # Version-specific parameters
-  min_images_per_class: 1               # Minimum samples per taxonomic class
-```
+#### TreeOfLife-10M
+📖 **[See the complete TreeOfLife-10M guide](./docs/treeoflife.md)** for detailed setup instructions, configuration options, and best practices.
 
 ## Output Structure
 

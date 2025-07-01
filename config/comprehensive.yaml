@@ -60,13 +60,3 @@ datasets:
     max_samples: null      
     min_objects: 1
     use_synsets: true        # Use WordNet synsets for better semantic quality
-
-  # TreeOfLife-10M Lightweight (biological dataset)
-  - name: "TreeOfLife-10M-Lightweight"
-    type: "treeoflife"
-    streaming: true
-    root_path: "./data/treeoflife"
-    split: "train"
-    config_name: "train_small"
-    taxonomic_level: "species"
-    strict_label_filtering: false    # Whether to apply strict filtering of uncertain/confusing labels (default: false)
