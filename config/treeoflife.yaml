@@ -24,7 +24,7 @@ datasets:
   # TreeOfLife-10M using official train_small split (953K images)
   - name: "TreeOfLife-10M-TrainSmall"
     type: "treeoflife"
-    streaming: true
+    streaming: false
     root_path: "./data/treeoflife"  # Cache directory for HuggingFace datasets
     split: "train_small"      # Use official lightweight split
     use_smart_sampling: true
