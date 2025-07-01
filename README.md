@@ -110,6 +110,9 @@ python evaluate.py config/visual_genome.yaml
 
 #### TreeOfLife-10M (Biological Taxa Classification)
 
+> ⚠️ **Warning**  
+> Due to the large size of the dataset, local and WebDataset modes have not been tested. The provided code and usage instructions are for reference only. Streaming mode is recommended for quick visualization and experimentation.
+
 TreeOfLife-10M is the largest ML-ready biological dataset with 10+ million images covering 454,000+ taxa. We provide flexible configuration options to accommodate different use cases and resource constraints.
 
 ```bash
@@ -133,8 +136,6 @@ python evaluate_clip.py config/treeoflife_webdataset.yaml
 - Requires HuggingFace authentication: `huggingface-cli login`
 - Streaming mode uses placeholder labels due to ID mismatch
 - For accurate results, use WebDataset or Local mode
-- Due to the large size of the dataset, local and WebDataset modes have not been fully tested. The provided code and usage instructions are for reference only.
-- Streaming mode is recommended for quick visualization and experimentation.
 
 📖 **[See the complete TreeOfLife-10M guide](./docs/treeoflife.md)** for detailed setup instructions, configuration options, and best practices.
 
