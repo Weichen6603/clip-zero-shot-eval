@@ -1,0 +1,120 @@
+# TreeOfLife-10M Streaming Configuration
+# This configuration uses HuggingFace streaming for online data loading
+# Recommended for: Quick start, no local storage, proof of concept
+
+# Model configuration
+clip_model: "ViT-B/32"  # Options: RN50, RN101, RN50x4, RN50x16, ViT-B/32, ViT-B/16, ViT-L/14
+device: "cuda"          # Options: cuda, cpu
+use_ensemble: true      # Whether to use multiple text templates for ensemble
+
+# Advanced model options
+# fp16: false           # Mixed precision may be unstable with streaming
+# model_cache_dir: "./models"  # Directory to cache downloaded models
+
+# Evaluation settings
+batch_size: 32          # Smaller batch size due to network latency
+num_workers: 2          # Limited workers to avoid connection issues
+save_predictions: false # Not recommended for streaming mode
+
+# Advanced evaluation options
+# pin_memory: false     # May cause issues with streaming
+# prefetch_factor: 1    # Minimal prefetching for streaming
+# persistent_workers: false  # Don't persist workers with streaming
+
+# Output settings
+output_dir: "./results/treeoflife_streaming"
+save_results: true
+# save_embeddings: false     # Not recommended with placeholder labels
+# save_per_class_results: false  # Limited value with placeholder labels
+# save_confusion_matrix: false   # Not meaningful with placeholder labels
+
+# Logging and monitoring
+verbose: true           # Helpful to monitor streaming progress
+# log_interval: 100          # Log every N batches
+# tensorboard_logging: false # Limited value for streaming experiments
+# wandb_project: null        # W&B logging optional
+# wandb_run_name: null
+
+# Dataset configuration
+datasets:
+  - name: "TreeOfLife-10M-Streaming"
+    type: "treeoflife"
+    
+    # Data location and mode
+    root_path: "./data/treeoflife_cache"  # Only for caching catalog
+    mode: "streaming"  # Force streaming mode
+    
+    # Dataset split (note: limited accuracy due to ID mismatch)
+    split: "train_small"  # Will approximate this split size
+    # split: "val"        # Can approximate validation size
+    
+    # Sampling options
+    max_samples: 10000    # Recommended to limit for streaming
+    # max_samples: 1000   # For very quick tests
+    # max_samples: 50000  # For longer experiments
+    # max_samples: null   # Not recommended - will try to load ~1M samples
+    
+    # Taxonomic settings (note: uses placeholder labels)
+    taxonomic_level: "species"  # Setting preserved but uses placeholders
+    # taxonomic_level: "genus"   # All levels use placeholders in streaming
+    # taxonomic_level: "family"  # Included for compatibility
+    
+    # Class filtering (limited effect with placeholders)
+    min_images_per_class: 1    # Cannot meaningfully filter in streaming
+    # min_images_per_class: 5   # Setting ignored in streaming mode
+    
+    # Label quality control (not applicable in streaming)
+    exclude_partial_labels: false  # Cannot filter - no real labels
+    strict_label_filtering: false  # Cannot filter - no real labels
+    
+    # Streaming specific options
+    # streaming_buffer_size: 1000   # Number of samples to buffer
+    # retry_attempts: 3             # Retry failed downloads
+    # timeout: 30                   # Download timeout in seconds
+    # cache_downloaded: true        # Cache downloaded images locally
+    # cache_dir: "./streaming_cache"  # Directory for image cache
+    
+    # HuggingFace specific options
+    # hf_token: null               # HuggingFace API token if needed
+    # hf_cache_dir: "~/.cache/huggingface"  # HF cache directory
+    # force_redownload: false      # Force redownload of dataset info
+    # revision: "main"             # Dataset revision to use
+    
+    # Network optimization
+    # max_concurrent_downloads: 4   # Parallel download threads
+    # chunk_size: 1024             # Download chunk size
+    # enable_progress_bar: true    # Show download progress
+    
+    # Sampling strategy (how to approximate splits)
+    # sampling_strategy: "random"   # Options: random, sequential
+    # sampling_seed: 42            # Seed for reproducible sampling
+    # target_distribution: "uniform"  # How to sample classes
+    
+    # Placeholder label generation
+    # placeholder_prefix: "class"   # Prefix for placeholder labels
+    # num_placeholder_classes: 1000  # Number of unique placeholders
+    # use_hash_labels: false        # Use hash-based labels instead
+
+# Streaming-specific templates (simpler due to placeholder labels)
+# custom_templates:
+#   - "a photo of a {}."
+#   - "an image of {}."
+#   - "this is a {}."
+
+# Connection settings
+# connection:
+#   max_retries: 5
+#   backoff_factor: 2
+#   verify_ssl: true
+#   proxy: null                   # HTTP proxy if needed
+
+# Warning suppression
+# warnings:
+#   suppress_label_warnings: true  # Don't warn about placeholder labels
+#   suppress_streaming_warnings: true  # Don't warn about approximations
+
+# Fallback options
+# fallback:
+#   enable_fallback: true         # Fall back to random sampling if streaming fails
+#   fallback_samples: 1000        # Number of random samples to generate
+#   fallback_image_size: [224, 224]  # Size of generated images
