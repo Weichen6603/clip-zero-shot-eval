@@ -1,0 +1,22 @@
+# CLIP model configuration
+clip_model: "ViT-B/32"  # Options: RN50, RN101, RN50x4, RN50x16, ViT-B/32, ViT-B/16, ViT-L/14
+device: "cuda"  # cuda or cpu
+use_ensemble: true  # Whether to use multiple templates for text encoding
+
+# Evaluation settings
+batch_size: 32  # Optimal balance between data loading and inference performance
+num_workers: 8  # Optimal for data loading throughput
+save_predictions: false  # Save individual predictions (large files)
+
+# Output settings
+output_dir: "./results/sun397_evaluation"  # Save results to local project folder
+save_results: true
+
+# Dataset configurations
+datasets:
+  # SUN397 dataset using Windows D drive for data storage
+  - name: "SUN397"
+    type: "sun397"
+    streaming: true  # Enable HuggingFace streaming mode for online image loading
+    root_path: "./data/sun397"
+    split: "train"  # SUN397 only has train split, will be auto-split for testing

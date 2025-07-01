@@ -1,0 +1,76 @@
+# TreeOfLife-10M Configuration - Full Dataset Version
+# 🔬 Complete evaluation using full 10M+ image dataset (~3TB)
+
+# CLIP model configuration
+clip_model: "ViT-B/32"  # Options: RN50, RN101, RN50x4, RN50x16, ViT-B/32, ViT-B/16, ViT-L/14
+device: "cuda"  # cuda or cpu
+use_ensemble: true  # Whether to use multiple templates for text encoding
+
+# Evaluation settings
+batch_size: 32  # Optimized batch size for memory efficiency
+num_workers: 8
+save_predictions: false  # Save individual predictions (large files for this dataset)
+
+# Output settings
+output_dir: "./results/treeoflife_full_evaluation"
+save_results: true
+
+# Dataset configurations
+datasets:
+  # TreeOfLife-10M Full Dataset Configuration
+  - name: "TreeOfLife-10M-Full"
+    type: "treeoflife"
+    streaming: true
+    root_path: "./data/treeoflife"  # Cache directory for HuggingFace datasets
+    split: "train"            # TreeOfLife-10M only has 'train' split
+    
+    # Taxonomic configuration
+    taxonomic_level: "species"           # Classification level: species, genus, family, order, class, phylum, kingdom
+    exclude_partial_labels: false       # Whether to exclude samples without full taxonomic hierarchy
+    strict_label_filtering: false       # Whether to apply strict filtering of uncertain/confusing labels (default: false)
+    
+    # Full dataset parameters - all 73 shards (~3TB)
+    # max_shards: null                   # Use all 73 shards (online/download complete dataset)
+    # max_samples: null                  # Use all ~10M+ samples (no limit)
+    min_images_per_class: 5              # Minimum images per taxonomic class to include (higher for better quality)
+    
+    # Alternative configurations for different research needs:
+    
+    # 🧬 Species-level classification (maximum granularity):
+    # taxonomic_level: "species"
+    # min_images_per_class: 10
+    # exclude_partial_labels: true      # Only use samples with complete taxonomy
+    
+    # 🔬 Genus-level classification (balanced granularity):
+    # taxonomic_level: "genus"
+    # min_images_per_class: 20
+    
+    # 🌿 Family-level classification (broader categories):
+    # taxonomic_level: "family"
+    # min_images_per_class: 50
+    
+    # 🏰 Kingdom-level classification (highest level):
+    # taxonomic_level: "kingdom"
+    # min_images_per_class: 1000
+    
+    # Performance optimization for full dataset:
+    # batch_size: 64                     # Larger batches for better GPU utilization
+    # num_workers: 8                     # More workers for faster data loading
+    
+    # Expected results (full dataset configuration):
+    # - Samples: ~8-10 million images (complete TreeOfLife-10M dataset)
+    # - Classes: 
+    #   * Species level: ~454,000+ unique species
+    #   * Genus level: ~50,000+ genera
+    #   * Family level: ~5,000+ families
+    #   * Kingdom level: ~12 kingdoms
+    # - Dataset size: ~3TB (complete dataset with all 73 shards)
+    # - Evaluation time: Days to weeks (depending on hardware and taxonomic level)
+    # - Memory usage: High (requires substantial storage and processing power)
+    # - Perfect for: Research publications, biodiversity studies, foundation model training
+    
+    # Hardware requirements:
+    # - Storage: 3TB+ available space
+    # - RAM: 32GB+ recommended
+    # - GPU: High-end GPU (V100, A100, RTX 4090, etc.) recommended
+    # - Network: High-speed internet for initial download (can take days)

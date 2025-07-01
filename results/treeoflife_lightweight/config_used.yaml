@@ -1,0 +1,21 @@
+clip_model: ViT-B/32
+device: cuda
+use_ensemble: true
+batch_size: 32
+num_workers: 8
+save_predictions: false
+output_dir: ./results/treeoflife_lightweight
+save_results: true
+datasets:
+- name: TreeOfLife-10M-TrainSmall
+  type: treeoflife
+  root_path: ./data/treeoflife
+  split: train_small
+  streaming: false
+  use_smart_sampling: true
+  taxonomic_level: species
+  exclude_partial_labels: false
+  strict_label_filtering: false
+  catalog_cache_size: 50000
+  max_samples: null
+  min_images_per_class: 1

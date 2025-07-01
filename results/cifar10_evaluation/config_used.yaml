@@ -1,0 +1,13 @@
+clip_model: ViT-B/32
+device: cuda
+use_ensemble: true
+batch_size: 32
+num_workers: 4
+save_predictions: false
+output_dir: ./results/cifar10_evaluation
+save_results: true
+datasets:
+- name: CIFAR10
+  type: cifar10
+  root_path: /mnt/d/data/cifar10
+  split: test

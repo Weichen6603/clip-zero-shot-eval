@@ -1,0 +1,41 @@
+# Visual Genome Configuration - Full Dataset Evaluation
+# Optimized for comprehensive evaluation with lazy loading
+
+# CLIP model configuration
+clip_model: "ViT-B/32"  # Options: RN50, RN101, RN50x4, RN50x16, ViT-B/32, ViT-B/16, ViT-L/14
+device: "cuda"  # cuda or cpu
+use_ensemble: true  # Whether to use multiple templates for text encoding
+
+# Evaluation settings
+batch_size: 32  # Optimized batch size for memory efficiency
+num_workers: 8  # Number of data loading workers
+save_predictions: false  # Save individual predictions (large files)
+
+# Output settings
+output_dir: "./results/visual_genome_evaluation"
+save_results: true
+
+# Dataset configurations
+datasets:
+  # Visual Genome with full dataset configuration
+  - name: "VisualGenome-Objects"
+    type: "visual_genome"
+    root_path: "./d/data/visual_genome"  # Cache directory for lazy loading
+    split: "train"  # Only split available
+    config_name: "objects_v1.2.0"  # Visual Genome configuration
+    
+    # Full dataset parameters with lazy loading optimization
+    # max_samples: null      # Use all available samples (~108K images) - remove to enable
+    min_objects: 1           # Include images with at least 1 object
+    max_objects: null        # No limit on object complexity
+    use_synsets: true        # Use WordNet synsets for better semantic quality
+    
+    # For testing or limited resources, uncomment these lines:
+    # max_samples: 10000     # Limit to 10K samples for faster evaluation
+    # max_objects: 20        # Limit complexity to 20 objects per image
+    
+    # Expected results (full dataset):
+    # - Samples: ~80,000-100,000 (after filtering)
+    # - Classes: 2,000-3,000 unique object types
+    # - Evaluation time: 3-6 hours (depending on hardware)
+    # - Memory usage: Low (thanks to lazy loading)
