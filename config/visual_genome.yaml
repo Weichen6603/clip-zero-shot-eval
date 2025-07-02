@@ -20,7 +20,7 @@ datasets:
   # Visual Genome with full dataset configuration
   - name: "VisualGenome-Objects"
     type: "visual_genome"
-    root_path: "./d/data/visual_genome"  # Cache directory for lazy loading
+    root_path: "./data/visual_genome"  # Cache directory for lazy loading
     split: "train"  # Only split available
     config_name: "objects_v1.2.0"  # Visual Genome configuration
     

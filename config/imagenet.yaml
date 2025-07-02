@@ -8,7 +8,7 @@ use_ensemble: true  # Whether to use multiple templates for text encoding
 
 # Evaluation settings
 batch_size: 32  # Smaller batch size for ImageNet due to larger images
-num_workers: 8
+num_workers: 1  # Reduced for streaming mode (max is dataset.num_shards=1)
 save_predictions: false  # Save individual predictions (large files)
 
 # Output settings
