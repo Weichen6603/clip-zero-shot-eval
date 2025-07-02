@@ -209,14 +209,16 @@ class VisualGenomeAdapter(BaseDatasetAdapter):
                 for obj in objects[:3]:  # Check first few objects only
                     if self.use_synsets:
                         synsets = obj.get("synsets", []) if isinstance(obj, dict) else getattr(obj, 'synsets', [])
-                        if synsets:
+                        # Check if synsets exist and are not empty
+                        if synsets and any(s.strip() for s in synsets if s):
                             has_valid_labels = True
                             break
-                    else:
-                        names = obj.get("names", []) if isinstance(obj, dict) else getattr(obj, 'names', [])
-                        if names:
-                            has_valid_labels = True
-                            break
+                    
+                    # Always check names as fallback (whether use_synsets is true or false)
+                    names = obj.get("names", []) if isinstance(obj, dict) else getattr(obj, 'names', [])
+                    if names and any(n.strip() for n in names if n):
+                        has_valid_labels = True
+                        break
                 
                 if has_valid_labels:
                     valid_indices.append(actual_idx)
@@ -277,17 +279,21 @@ class VisualGenomeAdapter(BaseDatasetAdapter):
                     objects = getattr(example, 'objects', [])
                 
                 for obj in objects[:3]:  # Limit objects per image for efficiency
+                    # Try synsets first if use_synsets is True
                     if self.use_synsets:
                         synsets = obj.get("synsets", []) if isinstance(obj, dict) else getattr(obj, 'synsets', [])
-                        for synset in synsets[:2]:  # Limit synsets per object
-                            if synset and isinstance(synset, str):
-                                # Clean synset label to remove WordNet suffixes
-                                cleaned_label = self._clean_synset_label(synset.strip())
-                                all_labels.add(cleaned_label)
-                    else:
-                        names = obj.get("names", []) if isinstance(obj, dict) else getattr(obj, 'names', [])
+                        if synsets:
+                            for synset in synsets[:2]:  # Limit synsets per object
+                                if synset and isinstance(synset, str) and synset.strip():
+                                    # Clean synset label to remove WordNet suffixes
+                                    cleaned_label = self._clean_synset_label(synset.strip())
+                                    all_labels.add(cleaned_label)
+                    
+                    # Always check names as fallback or primary (based on use_synsets)
+                    names = obj.get("names", []) if isinstance(obj, dict) else getattr(obj, 'names', [])
+                    if names:
                         for name in names[:2]:  # Limit names per object
-                            if name and isinstance(name, str):
+                            if name and isinstance(name, str) and name.strip():
                                 all_labels.add(name.strip())
                 
                 if i % 50 == 0 and i > 0:
@@ -381,14 +387,18 @@ class VisualGenomeAdapter(BaseDatasetAdapter):
             primary_label = "unknown"
             if objects:
                 obj = objects[0]  # Use first object
+                
+                # Try synsets first if use_synsets is True
                 if self.use_synsets:
                     synsets = obj.get("synsets", []) if isinstance(obj, dict) else getattr(obj, 'synsets', [])
-                    if synsets and synsets[0]:
+                    if synsets and synsets[0] and synsets[0].strip():
                         # Clean synset label to remove WordNet suffixes
                         primary_label = self._clean_synset_label(synsets[0].strip())
-                else:
+                
+                # If we still don't have a label or use_synsets is False, use names
+                if primary_label == "unknown":
                     names = obj.get("names", []) if isinstance(obj, dict) else getattr(obj, 'names', [])
-                    if names and names[0]:
+                    if names and names[0] and names[0].strip():
                         primary_label = names[0].strip()
             
             return image, primary_label

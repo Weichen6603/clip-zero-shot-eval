@@ -11,7 +11,6 @@ datasets:
   type: visual_genome
   root_path: ./data/visual_genome
   split: train
-  streaming: true
   config_name: objects_v1.2.0
   min_objects: 1
   max_objects: null

@@ -13,4 +13,12 @@ Dataset Results:
 ------------------------------------------------------------
 Dataset                        Accuracy   Top-5      Per-Class 
 ------------------------------------------------------------
-VisualGenome-Objects           9.84%      24.42%     7.52%     
+VisualGenome-Objects           2.09%      11.53%     2.73%     
+
+------------------------------------------------------------
+Evaluation Statistics:
+
+VisualGenome-Objects:
+  Samples processed: 29772
+  Batch errors: 0
+  Success rate: 100.00%
