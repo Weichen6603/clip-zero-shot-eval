@@ -1,0 +1,24 @@
+Zero-Shot Classification Results Summary
+============================================================
+
+Model Information:
+  model_name: ViT-B/32
+  device: cuda
+  use_ensemble: True
+  vision_width: 224
+  vision_layers: 12
+  embed_dim: 512
+
+Dataset Results:
+------------------------------------------------------------
+Dataset                        Accuracy   Top-5      Per-Class 
+------------------------------------------------------------
+SUN397                         49.81%     70.51%     48.02%    
+
+------------------------------------------------------------
+Evaluation Statistics:
+
+SUN397:
+  Samples processed: 87003
+  Batch errors: 0
+  Success rate: 100.00%

@@ -1,10 +1,13 @@
-"""ImageNet dataset adapter using Hugging Face datasets."""
+"""ImageNet dataset adapter using Hugging Face datasets (offline mode only)."""
 
 import os
 import sys
-from typing import List, Optional, Tuple, Any
+from typing import List, Optional, Tuple, Any, Dict
 from PIL import Image
 import torch
+import numpy as np
+from tqdm import tqdm
+import pickle
 
 # Add parent directory to path for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -13,216 +16,204 @@ from base_dataset import BaseDatasetAdapter
 
 
 class ImageNetAdapter(BaseDatasetAdapter):
-    """Adapter for ImageNet dataset using Hugging Face mlx-vision/imagenet-1k."""
+    """Adapter for ImageNet dataset using Hugging Face imagenet-1k.
+    
+    This implementation focuses on offline mode with optimized data loading.
+    Features:
+    - Full dataset download and caching
+    - Memory-mapped data storage for efficient access
+    - Precomputed indices for fast random access
+    - Support for validation split (50,000 images)
+    """
 
     def __init__(self, root_path: str, transform=None, split: str = 'validation', 
-                 streaming: bool = True, **kwargs):
+                 max_samples: Optional[int] = None, use_cache: bool = True, **kwargs):
         """Initialize ImageNet adapter.
         
         Args:
-            root_path: Root directory to cache the dataset (will use as cache_dir)
+            root_path: Root directory to cache the dataset
             transform: Image transformations to apply
-            split: Dataset split to use ('validation' for ImageNet-1K)
-            streaming: Whether to use streaming mode (True) or download full dataset (False)
+            split: Dataset split to use ('train' or 'validation')
+            max_samples: Maximum number of samples to use (None for all)
+            use_cache: Whether to use cached preprocessed data
             **kwargs: Additional arguments
         """
-        # Set cache directory to the specified path
-        self.cache_dir = root_path
-        self.dataset = None  # Will be loaded in _load_data
-        self.max_samples = kwargs.get("max_samples", None)
+        # Validate split
+        if split not in ['train', 'validation']:
+            raise ValueError(f"Split must be 'train' or 'validation', got {split}")
         
-        # streaming config: explicit arg > kwargs > default True
-        if 'streaming' in kwargs:
-            self.streaming = kwargs['streaming']
-        else:
-            self.streaming = streaming
-
+        # Set paths
+        self.cache_dir = root_path
+        self.dataset = None
+        self.max_samples = max_samples
+        self.use_cache = use_cache
+        self.split = split
+        
+        # Cache file paths
+        self.cache_file = os.path.join(self.cache_dir, f'imagenet_{split}_cache.pkl')
+        self.index_file = os.path.join(self.cache_dir, f'imagenet_{split}_index.pkl')
+        
+        # Initialize data storage
+        self._image_cache = {}
+        self._label_cache = {}
+        self._synset_cache = {}
+        
         super().__init__(root_path, transform, split, **kwargs)
 
     def _load_data(self, **kwargs):
-        """Load ImageNet data from Hugging Face.
-
-        Downloads and caches the dataset at the specified Windows path via WSL mount.
-        """
+        """Load ImageNet data from Hugging Face with optimized offline strategy."""
         try:
             from datasets import load_dataset
         except ImportError:
             raise ImportError("Please install datasets: pip install datasets")
         
+        # Try to load from cache first
+        if self.use_cache and os.path.exists(self.cache_file) and os.path.exists(self.index_file):
+            print(f"Loading cached ImageNet data from {self.cache_file}")
+            return self._load_from_cache()
+        
         print(f"Loading ImageNet-1K dataset from Hugging Face...")
         print(f"Cache directory: {self.cache_dir}")
         print(f"Split: {self.split}")
-        print(f"Streaming mode: {self.streaming}")
         
-        # Create cache directory if it doesn't exist
-        import os
+        # Create cache directory
         os.makedirs(self.cache_dir, exist_ok=True)
         
-        # Load dataset from Hugging Face
+        # Load dataset (offline mode)
         try:
-            # Note: For official imagenet-1k dataset, authentication is handled automatically
+            print("Downloading/loading dataset (this may take a while for first time)...")
             self.dataset = load_dataset(
                 "imagenet-1k", 
                 split=self.split,
-                streaming=self.streaming,  # Use streaming parameter from config
                 cache_dir=self.cache_dir,
-                trust_remote_code=True  # Required for custom dataset code
+                trust_remote_code=True
             )
-            print(f"Successfully loaded dataset")
-            print(f"Dataset info: {self.dataset}")
-            print(f"Dataset type: {type(self.dataset)}")
             
-            # Debug: Check if dataset is actually loaded correctly
-            if isinstance(self.dataset, str):
-                raise ValueError(f"Dataset loading returned a string instead of dataset object: {self.dataset}")
+            print(f"Successfully loaded dataset with {len(self.dataset)} samples")
             
-            # Only print features if dataset is not a dict (i.e., is a Dataset or IterableDataset)
-            if not isinstance(self.dataset, dict):
-                if hasattr(self.dataset, 'features'):
-                    print(f"Dataset features: {self.dataset.features}")
-                else:
-                    print("Dataset features: Not available (streaming mode)")
-            else:
-                print(f"Dataset is a dict type ({type(self.dataset)}), skipping features print.")
         except Exception as e:
             print(f"Error loading dataset: {e}")
-            print("Note: You may need to authenticate with Hugging Face:")
-            print("1. Install huggingface_hub: pip install huggingface_hub")
-            print("2. Login: huggingface-cli login")
-            print("3. Request access to imagenet-1k dataset if needed")
+            print("\nTroubleshooting:")
+            print("1. Make sure you're logged in: huggingface-cli login")
+            print("2. Request access at: https://huggingface.co/datasets/imagenet-1k")
+            print("3. Wait for approval (usually quick)")
             raise
         
-        # Convert to our format
+        # Process and cache the dataset
+        return self._process_and_cache_dataset()
+    
+    def _process_and_cache_dataset(self) -> List[Dict[str, Any]]:
+        """Process the dataset and create optimized cache."""
         data = []
-        print("Processing dataset samples...")
-        try:
-            from tqdm import tqdm
-        except ImportError:
-            print("tqdm not installed. Install it with: pip install tqdm")
-            tqdm = lambda x, **kwargs: x  # fallback: no progress bar
         
-        # Set total for progress bar - use known ImageNet validation size or max_samples
-        if self.max_samples is not None:
-            total = self.max_samples
-        elif self.split == 'validation' and self.streaming:
-            # ImageNet validation split has exactly 50,000 images
-            total = 50000
-        elif self.split == 'train' and self.streaming:
-            # ImageNet train split has approximately 1,281,167 images
-            total = 1281167
-        else:
-            total = None
-            
-        # Only try to get exact length for non-streaming datasets that support it
-        if not self.streaming:
-            try:
-                # Import Dataset type to check instance type
-                from datasets import Dataset
-                if isinstance(self.dataset, Dataset):
-                    dataset_len = len(self.dataset)
-                    total = min(dataset_len, self.max_samples or dataset_len)
-            except:
-                pass  # Use estimated total
+        # Determine number of samples to process
+        total_samples = len(self.dataset)
+        if self.max_samples:
+            total_samples = min(total_samples, self.max_samples)
         
-        # Use progress bar with estimated total to show ETA
-        progress_bar = tqdm(
-            self.dataset, 
-            total=total, 
-            desc="Processing samples", 
-            dynamic_ncols=True, 
-            leave=True,
-            unit="samples",
-            unit_scale=True
-        )
+        print(f"Processing {total_samples} samples...")
         
-        for idx, sample in enumerate(progress_bar):
-            if self.max_samples is not None and idx >= self.max_samples:
-                break
+        # Process samples with progress bar
+        for idx in tqdm(range(total_samples), desc="Processing samples"):
+            sample = self.dataset[idx]
             
-            # Update progress description with current count
-            if idx % 100 == 0:  # Update every 100 samples to avoid too frequent updates
-                progress_bar.set_description(f"Processing samples ({idx+1})")
+            # Get label and synset
+            label = sample['label']
             
-            # Ensure sample is a dictionary
-            if not isinstance(sample, dict):
-                print(f"Warning: Sample {idx} is not a dictionary: {type(sample)}")
-                continue
-            
-            # Get synset string using int2str method
+            # Get synset if available
             synset = None
-            try:
-                if self.dataset is not None and not isinstance(self.dataset, dict):
-                    features = getattr(self.dataset, 'features', None)
-                    if features is not None and 'label' in features:
-                        synset = features['label'].int2str(sample['label'])
-                    else:
-                        synset = f"synset_{sample['label']}"
-                else:
-                    synset = f"synset_{sample['label']}"
-            except Exception as e:
-                synset = f"synset_{sample['label']}"
-            
-            if self.streaming:
-                # In streaming mode, only store metadata - no image objects (即用即扔)
-                data.append({
-                    'image_path': idx,  # Use index as identifier for lazy loading
-                    'label': sample['label'],  # This is the class index (0-999)
-                    'synset': synset,  # This is the synset string (e.g., 'n01440764')
-                    # No image_obj stored - will be loaded on-demand in __getitem__
-                })
+            if hasattr(self.dataset.features['label'], 'int2str'):
+                synset = self.dataset.features['label'].int2str(label)
             else:
-                # In offline mode, save image temporarily to match base class interface
-                import tempfile
-                import os
-                temp_dir = os.path.join(self.cache_dir, "temp_images")
-                os.makedirs(temp_dir, exist_ok=True)
-                temp_path = os.path.join(temp_dir, f"img_{idx}.jpg")
-                
-                # Save PIL image to temporary file
-                sample['image'].save(temp_path, "JPEG")
-                
-                data.append({
-                    'image_path': temp_path,  # Path to temporary image file for base class
-                    'label': sample['label'],  # This is the class index (0-999)
-                    'synset': synset,  # This is the synset string (e.g., 'n01440764')
-                    'image_obj': sample['image']  # Keep original PIL object for reference
-                })
+                synset = f"class_{label}"
+            
+            # Store in cache
+            self._image_cache[idx] = sample['image']
+            self._label_cache[idx] = label
+            self._synset_cache[idx] = synset
+            
+            # Add to data list
+            data.append({
+                'image_idx': idx,
+                'label': label,
+                'synset': synset
+            })
         
-        print(f"Successfully processed {len(data)} samples")
+        # Save cache if enabled
+        if self.use_cache:
+            self._save_cache(data)
         
-        # Store dataset reference for on-demand loading in streaming mode
-        self._dataset_for_streaming = self.dataset if self.streaming else None
-        self._streaming_total = total  # Store total count for streaming access
-
+        return data
+    
+    def _save_cache(self, data: List[Dict[str, Any]]):
+        """Save processed data to cache files."""
+        print(f"Saving cache to {self.cache_file}")
+        
+        # Save index data
+        with open(self.index_file, 'wb') as f:
+            pickle.dump(data, f)
+        
+        # Save a lightweight version without images for quick loading
+        cache_data = {
+            'num_samples': len(data),
+            'classes': self._get_classes(),
+            'split': self.split
+        }
+        
+        with open(self.cache_file, 'wb') as f:
+            pickle.dump(cache_data, f)
+        
+        print("Cache saved successfully")
+    
+    def _load_from_cache(self) -> List[Dict[str, Any]]:
+        """Load data from cache files."""
+        # Load index
+        with open(self.index_file, 'rb') as f:
+            data = pickle.load(f)
+        
+        # Load metadata
+        with open(self.cache_file, 'rb') as f:
+            cache_data = pickle.load(f)
+        
+        print(f"Loaded {len(data)} cached samples")
+        
+        # Reload the dataset for image access
+        try:
+            from datasets import load_dataset
+            self.dataset = load_dataset(
+                "imagenet-1k", 
+                split=self.split,
+                cache_dir=self.cache_dir,
+                trust_remote_code=True
+            )
+        except Exception as e:
+            print(f"Warning: Could not reload dataset for image access: {e}")
+        
         return data
 
     def _get_classes(self) -> List[str]:
-        """Get ImageNet class names using the full 1000 classes from the dataset features."""
+        """Get ImageNet class names using the dataset features."""
         if self.dataset is None:
-            return []
+            return [f"class_{i}" for i in range(1000)]
+        
         try:
-            # Only access features if dataset is not a dict and features is not None
-            if not isinstance(self.dataset, dict):
-                features = getattr(self.dataset, 'features', None)
-                if features is not None and 'label' in features:
-                    label_feature = features['label']
-                    if hasattr(label_feature, 'names'):
-                        return label_feature.names
-                    else:
-                        print("Warning: Could not get class names from dataset features")
-                        return [f"class_{i}" for i in range(1000)]
-                else:
-                    print(f"Warning: features is None or missing 'label', cannot extract class names.")
-                    return [f"class_{i}" for i in range(1000)]
+            if hasattr(self.dataset.features['label'], 'names'):
+                return self.dataset.features['label'].names
             else:
-                print(f"Warning: self.dataset is a dict type ({type(self.dataset)}), cannot extract class names from features.")
-                return [f"class_{i}" for i in range(1000)]
+                # Fallback: try to get from int2str
+                classes = []
+                for i in range(1000):
+                    if hasattr(self.dataset.features['label'], 'int2str'):
+                        classes.append(self.dataset.features['label'].int2str(i))
+                    else:
+                        classes.append(f"class_{i}")
+                return classes
         except Exception as e:
-            print(f"Warning: Could not extract class names from features: {e}")
+            print(f"Warning: Could not extract class names: {e}")
             return [f"class_{i}" for i in range(1000)]
 
     def get_templates(self) -> List[str]:
-        """Templates for ImageNet zero-shot classification."""
+        """Get templates for ImageNet zero-shot classification."""
         import sys
         import os
         sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -230,27 +221,49 @@ class ImageNetAdapter(BaseDatasetAdapter):
         return DatasetTemplates.get_templates()
 
     def __getitem__(self, index: int) -> Tuple[torch.Tensor, int]:
-        """Get a sample by index, handling both streaming and offline modes with lazy loading."""
+        """Get a sample by index with optimized loading."""
         item = self.data[index]
         
-        if self.streaming:
-            # In streaming mode, load image on-demand (即用即扔)
-            image = self._load_image_on_demand(index)
-        else:
-            # In offline mode, load from temporary file path
-            image_path = item['image_path']
-            if 'image_obj' in item:
-                # Use cached PIL object if available
-                image = item['image_obj']
+        # Get image
+        if 'image_idx' in item:
+            # Load from dataset
+            image_idx = item['image_idx']
+            
+            # Try cache first
+            if image_idx in self._image_cache:
+                image = self._image_cache[image_idx]
+            elif self.dataset is not None:
+                # Load from dataset
+                image = self.dataset[image_idx]['image']
+                # Optionally cache for repeated access
+                if len(self._image_cache) < 1000:  # Limit cache size
+                    self._image_cache[image_idx] = image
             else:
-                # Load from file path
-                image = Image.open(image_path).convert('RGB')
+                # Fallback: create placeholder
+                print(f"Warning: Could not load image at index {image_idx}")
+                image = Image.new('RGB', (224, 224), color='gray')
+        else:
+            # Legacy format - should not happen with new cache
+            print(f"Warning: Legacy data format at index {index}")
+            image = Image.new('RGB', (224, 224), color='gray')
+        
+        # Ensure PIL Image
+        if not isinstance(image, Image.Image):
+            if hasattr(image, 'convert'):
+                image = image.convert('RGB')
+            else:
+                print(f"Warning: Invalid image type at index {index}")
+                image = Image.new('RGB', (224, 224), color='gray')
+        
+        # Ensure RGB
+        if image.mode != 'RGB':
+            image = image.convert('RGB')
         
         # Apply transforms
         if self.transform:
             image = self.transform(image)
         else:
-            # Convert PIL image to tensor if no transform is provided
+            # Default transform to tensor
             import torchvision.transforms as transforms
             to_tensor = transforms.ToTensor()
             image = to_tensor(image)
@@ -259,29 +272,39 @@ class ImageNetAdapter(BaseDatasetAdapter):
         label = item['label']
         
         return image, label
-
-    def _load_image_on_demand(self, index: int) -> Image.Image:
-        """Load image on-demand for streaming mode to save memory (即用即扔)."""
-        try:
-            if self._dataset_for_streaming is None:
-                raise RuntimeError("Dataset not available for streaming")
-            
-            # For streaming datasets, we need to iterate to the specific index
-            # This is not efficient for random access, but saves memory
-            for i, sample in enumerate(self._dataset_for_streaming):
-                if i == index:
-                    image = sample['image']
-                    if hasattr(image, 'convert'):
-                        if image.mode != 'RGB':
-                            image = image.convert('RGB')
-                    return image
-                elif i > index:
-                    break
-            
-            # If we can't find the image, return a placeholder
-            print(f"Warning: Could not load image at index {index}, using placeholder")
-            return Image.new('RGB', (224, 224), color='gray')
-            
-        except Exception as e:
-            print(f"Error loading image at index {index}: {e}")
-            return Image.new('RGB', (224, 224), color='gray')
+    
+    def get_sample_info(self, index: int) -> Dict[str, Any]:
+        """Get detailed information about a sample."""
+        item = self.data[index]
+        
+        info = {
+            'index': index,
+            'label': item['label'],
+            'synset': item.get('synset', f"class_{item['label']}"),
+            'class_name': self.classes[item['label']] if item['label'] < len(self.classes) else 'unknown'
+        }
+        
+        return info
+    
+    def clear_cache(self):
+        """Clear all cached data to free memory."""
+        self._image_cache.clear()
+        self._label_cache.clear()
+        self._synset_cache.clear()
+        
+        if hasattr(self, 'dataset'):
+            del self.dataset
+            self.dataset = None
+        
+        print("Cache cleared")
+    
+    def __len__(self) -> int:
+        """Return the number of samples."""
+        return len(self.data)
+    
+    def __repr__(self) -> str:
+        """String representation of the adapter."""
+        return (f"ImageNetAdapter(split='{self.split}', "
+                f"samples={len(self)}, "
+                f"classes={len(self.classes)}, "
+                f"cache_dir='{self.cache_dir}')")

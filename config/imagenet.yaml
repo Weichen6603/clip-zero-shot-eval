@@ -1,5 +1,5 @@
 # ImageNet Configuration for CLIP Zero-Shot Evaluation
-# Using official Hugging Face imagenet-1k dataset
+# Using official Hugging Face imagenet-1k dataset (Offline Mode)
 
 # CLIP model configuration
 clip_model: "ViT-B/32"  # Options: RN50, RN101, RN50x4, RN50x16, ViT-B/32, ViT-B/16, ViT-L/14
@@ -7,9 +7,9 @@ device: "cuda"  # cuda or cpu
 use_ensemble: true  # Whether to use multiple templates for text encoding
 
 # Evaluation settings
-batch_size: 32  # Smaller batch size for ImageNet due to larger images
-num_workers: 1  # Reduced for streaming mode (max is dataset.num_shards=1)
-save_predictions: false  # Save individual predictions (large files)
+batch_size: 64  # Increased batch size for offline mode (adjust based on GPU memory)
+num_workers: 8  # Number of data loading workers
+save_predictions: false  # Save individual predictions (creates large files ~400MB)
 
 # Output settings
 output_dir: "./results/imagenet_1k_evaluation"
@@ -20,6 +20,13 @@ datasets:
   # ImageNet dataset from Hugging Face (official imagenet-1k)
   - name: "ImageNet-1K"
     type: "imagenet"
-    streaming: true  # Set to true to enable HuggingFace streaming mode
-    root_path: "./data/imagenet"  # Cache directory on Windows D: drive via WSL mount
+    root_path: "/mnt/d/data/imagenet"  # Cache directory for dataset
     split: "validation"  # Use validation split (50K images)
+    
+    # Offline mode specific settings
+    use_cache: true  # Use cached preprocessed data for faster loading
+    max_samples: null  # null for all 50K samples, or specify number for testing
+    
+    # Optional: Advanced settings
+    # cache_size_limit: 1000  # Maximum number of images to keep in memory cache
+    # preload_images: false  # Whether to preload all images into memory (requires ~50GB RAM)

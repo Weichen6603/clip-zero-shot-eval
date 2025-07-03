@@ -1,0 +1,24 @@
+Zero-Shot Classification Results Summary
+============================================================
+
+Model Information:
+  model_name: ViT-B/32
+  device: cuda
+  use_ensemble: False
+  vision_width: 224
+  vision_layers: 12
+  embed_dim: 512
+
+Dataset Results:
+------------------------------------------------------------
+Dataset                        Accuracy   Top-5      Per-Class 
+------------------------------------------------------------
+ImageNet-1K-Test               58.90%     85.00%     37.17%    
+
+------------------------------------------------------------
+Evaluation Statistics:
+
+ImageNet-1K-Test:
+  Samples processed: 1000
+  Batch errors: 0
+  Success rate: 100.00%

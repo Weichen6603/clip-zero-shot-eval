@@ -1,0 +1,15 @@
+clip_model: ViT-B/32
+device: cuda
+use_ensemble: false
+batch_size: 128
+num_workers: 4
+save_predictions: false
+output_dir: ./results/imagenet_test
+save_results: true
+datasets:
+- name: ImageNet-1K-Test
+  type: imagenet
+  root_path: ./data/imagenet
+  split: validation
+  use_cache: true
+  max_samples: 1000

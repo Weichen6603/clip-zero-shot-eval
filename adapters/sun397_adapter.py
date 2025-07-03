@@ -24,12 +24,11 @@ class SUN397Adapter(BaseDatasetAdapter):
         else:
             return self._load_data_tensorflow(**kwargs)
     
-    def _load_data_huggingface(self, test_split_ratio=0.2, streaming=True, **kwargs):
+    def _load_data_huggingface(self, test_split_ratio=0.2, **kwargs):
         """Load SUN397 data using Hugging Face Datasets.
         
         Args:
             test_split_ratio: Ratio to split train data into train/test (default: 0.2)
-            streaming: Enable streaming mode for Hugging Face datasets (default: True)
         """
         try:
             from datasets import load_dataset
@@ -45,80 +44,63 @@ class SUN397Adapter(BaseDatasetAdapter):
             
             # Handle different split requests
             if self.split == 'test':
+                # Load full train dataset and split it
                 print("Note: SUN397 only has 'train' split. Creating test split from training data...")
-                dataset = load_dataset("1aurent/SUN397", split='train', cache_dir=self.root_path, streaming=streaming)
+                dataset = load_dataset("1aurent/SUN397", split='train', cache_dir=self.root_path)
                 
-                if not streaming:
-                    train_test_split = dataset.train_test_split(test_size=test_split_ratio, shuffle=True, seed=42)
-                    dataset = train_test_split['test']
-                    print(f"Using test split ({len(dataset)} samples) from training data")
-                else:
-                    print("Streaming mode enabled, test split will be handled dynamically.")
+                # Split the dataset
+                train_test_split = dataset.train_test_split(test_size=test_split_ratio, shuffle=True, seed=42)
+                dataset = train_test_split['test']  # Use test portion
+                print(f"Using test split ({len(dataset)} samples) from training data")
+                
             elif self.split == 'train':
-                dataset = load_dataset("1aurent/SUN397", split='train', cache_dir=self.root_path, streaming=streaming)
+                # Load full train dataset
+                dataset = load_dataset("1aurent/SUN397", split='train', cache_dir=self.root_path)
                 
-                if not streaming and test_split_ratio > 0:
+                # Optionally split to keep only training portion
+                if test_split_ratio > 0:
                     train_test_split = dataset.train_test_split(test_size=test_split_ratio, shuffle=True, seed=42)
-                    dataset = train_test_split['train']
+                    dataset = train_test_split['train']  # Use train portion
                     print(f"Using train split ({len(dataset)} samples) from training data")
                 else:
-                    print(f"Using full dataset ({'streaming mode' if streaming else len(dataset)} samples)")
+                    print(f"Using full dataset ({len(dataset)} samples)")
             else:
+                # Fallback: use available split
                 print(f"Warning: Split '{self.split}' not available. Using 'train' split.")
-                dataset = load_dataset("1aurent/SUN397", split='train', cache_dir=self.root_path, streaming=streaming)
-
+                dataset = load_dataset("1aurent/SUN397", split='train', cache_dir=self.root_path)
+              # Apply max_samples limit if specified
             max_samples = kwargs.get('max_samples', None)
+            dataset_length = len(dataset) if hasattr(dataset, '__len__') else 87003
             
-            if streaming:
-                # Streaming mode: Create lightweight metadata for lazy loading (即用即扔)
-                print("Streaming mode enabled - creating lightweight metadata...")
-                if max_samples is not None:
-                    actual_length = max_samples
-                    print(f"Limited to {max_samples} samples for testing")
-                else:
-                    # For streaming, we can't know exact length, use default estimate
-                    actual_length = 19850  # SUN397 approximate size
-                    print(f"Using estimated dataset size ({actual_length} samples)")
-                
-                # Store dataset reference for on-demand loading
-                self._hf_dataset = dataset
-                self._dataset_for_streaming = dataset
-                
-                # Create minimal metadata - no image objects stored (即用即扔)
-                data = []
-                for idx in range(actual_length):
-                    data.append({
-                        'image_path': idx,  # Index for lazy loading
-                        'label': None,  # Will be loaded on-demand
-                    })
-                    
-                    if (idx + 1) % 10000 == 0:
-                        print(f"Created metadata for {idx + 1} samples...")
-                
-                print(f"✓ Successfully created lightweight metadata for {len(data)} samples")
-                return data
+            if max_samples and max_samples < dataset_length:
+                print(f"Limited to {max_samples} samples for testing")
+                actual_length = max_samples
             else:
-                # Non-streaming mode: Original implementation
-                dataset_length = len(dataset) if hasattr(dataset, '__len__') else 87003
-                if max_samples is not None and max_samples < dataset_length:
-                    print(f"Limited to {max_samples} samples for testing")
-                    actual_length = max_samples
-                else:
-                    print(f"Using full dataset ({dataset_length} samples)")
-                    actual_length = dataset_length
-
-                self._hf_dataset = dataset
-                data = []
-                print(f"Creating metadata for {actual_length} samples...")
-                for idx in range(actual_length):
-                    data.append({
-                        'image_path': idx,
-                        'label': None,
-                    })
-                    if (idx + 1) % 10000 == 0:
-                        print(f"Created metadata for {idx + 1} samples...")
-                print(f"✓ Successfully created metadata for {len(data)} samples")
-                return data
+                print(f"Using full dataset ({dataset_length} samples)")
+                actual_length = dataset_length
+            
+            # Store the dataset reference for lazy loading
+            self._hf_dataset = dataset
+            
+            # Create lightweight data structure WITHOUT loading actual images
+            data = []
+            print(f"Creating metadata for {actual_length} samples...")
+            
+            # Only create metadata entries - don't load images yet
+            for idx in range(actual_length):
+                # We'll get the label when needed in __getitem__
+                data.append({
+                    'image_path': idx,  # Index into the HF dataset
+                    'label': None,  # Will be loaded on demand
+                })
+                
+                # Show progress for large datasets
+                if (idx + 1) % 10000 == 0:
+                    print(f"Created metadata for {idx + 1} samples...")
+            
+            print(f"✓ Successfully created metadata for {len(data)} samples")
+            return data
+            
         except Exception as e:
             raise RuntimeError(
                 f"Failed to load SUN397 dataset from Hugging Face: {str(e)}\n"
@@ -240,30 +222,56 @@ class SUN397Adapter(BaseDatasetAdapter):
 
     def get_templates(self) -> List[str]:
         """Templates for SUN397 scene classification."""
-        import sys
-        import os
-        sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        # Import here to avoid circular import
         from dataset_adapters import DatasetTemplates
         return DatasetTemplates.get_templates()
 
     def __getitem__(self, idx: int) -> tuple:
-        """Override to handle lazy loading of images from HuggingFace dataset with streaming support."""
+        """Override to handle lazy loading of images from HuggingFace dataset."""
         item = self.data[idx]
         
-        from PIL import Image
-        
-        # Check if image is pre-loaded (for backward compatibility)
+        from PIL import Image        # Check if image is pre-loaded (for backward compatibility)
         if '_pil_image' in item:
             image = item['_pil_image']
             label_text = item['label']
         else:
-            # Check if we're in streaming mode and use on-demand loading
-            if hasattr(self, '_dataset_for_streaming') and self._dataset_for_streaming is not None:
-                # Streaming mode: load image on-demand (即用即扔)
-                image, label_text = self._load_image_on_demand(idx)
-            else:
-                # Non-streaming mode: traditional lazy loading
-                image, label_text = self._load_image_traditional(idx)
+            # Lazy load from HuggingFace dataset
+            hf_idx = item['image_path']  # This is the index in the HF dataset
+            try:
+                # Try different methods to access the dataset item
+                if hasattr(self._hf_dataset, '__getitem__'):
+                    hf_item = self._hf_dataset[hf_idx]
+                elif hasattr(self._hf_dataset, 'select'):
+                    hf_item = self._hf_dataset.select([hf_idx])[0]
+                else:
+                    raise AttributeError("Dataset doesn't support indexing")
+                    
+                image = hf_item['image']
+                raw_label = hf_item['label']
+                
+                # Use the proper HuggingFace way to convert label index to name
+                if isinstance(raw_label, int):
+                    # Use ClassLabel.int2str() method to get the real class name
+                    if (hasattr(self._hf_dataset, 'features') and 
+                        'label' in self._hf_dataset.features and
+                        hasattr(self._hf_dataset.features['label'], 'int2str')):
+                        try:
+                            label_text = self._hf_dataset.features['label'].int2str(raw_label)
+                            label_text = self._clean_class_name(label_text)
+                        except:
+                            label_text = f"class_{raw_label}"
+                    else:
+                        label_text = f"class_{raw_label}"
+                elif isinstance(raw_label, str):
+                    # If already a string, clean it
+                    label_text = self._clean_class_name(raw_label)
+                else:
+                    label_text = f"class_{raw_label}"
+                    
+            except Exception as e:
+                # Fallback: create placeholder
+                image = Image.new('RGB', (224, 224), color='gray')
+                label_text = 'unknown'
 
         if self.transform:
             image = self.transform(image)
@@ -276,96 +284,3 @@ class SUN397Adapter(BaseDatasetAdapter):
             label = 0
         
         return image, label
-
-    def _load_image_on_demand(self, idx: int) -> tuple:
-        """Load image on-demand for streaming mode to save memory (即用即扔)."""
-        try:
-            if self._dataset_for_streaming is None:
-                raise RuntimeError("Streaming dataset not available")
-            
-            # For streaming datasets, we need to iterate to the specific index
-            for i, sample in enumerate(self._dataset_for_streaming):
-                if i == idx:
-                    image = sample['image']
-                    raw_label = sample['label']
-                    
-                    # Convert image to RGB if needed
-                    if hasattr(image, 'convert'):
-                        if image.mode != 'RGB':
-                            image = image.convert('RGB')
-                    
-                    # Convert label
-                    if isinstance(raw_label, int):
-                        # Try to get label name from features if available
-                        try:
-                            if (hasattr(self._dataset_for_streaming, 'features') and 
-                                'label' in self._dataset_for_streaming.features and
-                                hasattr(self._dataset_for_streaming.features['label'], 'int2str')):
-                                label_text = self._dataset_for_streaming.features['label'].int2str(raw_label)
-                                label_text = self._clean_class_name(label_text)
-                            else:
-                                label_text = f"class_{raw_label}"
-                        except:
-                            label_text = f"class_{raw_label}"
-                    elif isinstance(raw_label, str):
-                        label_text = self._clean_class_name(raw_label)
-                    else:
-                        label_text = f"class_{raw_label}"
-                    
-                    return image, label_text
-                elif i > idx:
-                    break
-            
-            # If we can't find the image, return a placeholder
-            print(f"Warning: Could not load image at index {idx}, using placeholder")
-            from PIL import Image
-            return Image.new('RGB', (224, 224), color='gray'), 'unknown'
-            
-        except Exception as e:
-            print(f"Error loading image at index {idx}: {e}")
-            from PIL import Image
-            return Image.new('RGB', (224, 224), color='gray'), 'unknown'
-
-    def _load_image_traditional(self, idx: int) -> tuple:
-        """Traditional lazy loading for non-streaming mode."""
-        item = self.data[idx]
-        hf_idx = item['image_path']  # This is the index in the HF dataset
-        
-        try:
-            # Try different methods to access the dataset item
-            if hasattr(self._hf_dataset, '__getitem__'):
-                hf_item = self._hf_dataset[hf_idx]
-            elif hasattr(self._hf_dataset, 'select'):
-                hf_item = self._hf_dataset.select([hf_idx])[0]
-            else:
-                raise AttributeError("Dataset doesn't support indexing")
-                
-            image = hf_item['image']
-            raw_label = hf_item['label']
-            
-            # Use the proper HuggingFace way to convert label index to name
-            if isinstance(raw_label, int):
-                # Use ClassLabel.int2str() method to get the real class name
-                if (hasattr(self._hf_dataset, 'features') and 
-                    'label' in self._hf_dataset.features and
-                    hasattr(self._hf_dataset.features['label'], 'int2str')):
-                    try:
-                        label_text = self._hf_dataset.features['label'].int2str(raw_label)
-                        label_text = self._clean_class_name(label_text)
-                    except:
-                        label_text = f"class_{raw_label}"
-                else:
-                    label_text = f"class_{raw_label}"
-            elif isinstance(raw_label, str):
-                # If already a string, clean it
-                label_text = self._clean_class_name(raw_label)
-            else:
-                label_text = f"class_{raw_label}"
-                
-        except Exception as e:
-            # Fallback: create placeholder
-            from PIL import Image
-            image = Image.new('RGB', (224, 224), color='gray')
-            label_text = 'unknown'
-            
-        return image, label_text

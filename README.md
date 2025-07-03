@@ -54,14 +54,15 @@ huggingface-cli login
 
 ## Quick Start
 
-### Data Loading Modes: Online (Streaming) vs. Offline (Local Caching)
+### Data Loading
 
-This framework supports two main data loading modes for large datasets:
+This framework downloads and caches datasets locally for evaluation. Different datasets use different loading mechanisms:
 
-- **Online (Streaming) Mode**: Images are loaded on demand from HuggingFace during evaluation, not all downloaded at once. This keeps memory and disk usage low, and is recommended for most users and large datasets. Enable by setting `streaming: true` in the config.
-- **Offline (Local Caching) Mode**: All images are downloaded and cached locally before evaluation. This can be faster for repeated runs if you have enough disk space, but requires significant storage. Enable by setting `streaming: false` (or omitting the option for some datasets).
+- **Small datasets** (CIFAR-10, CIFAR-100): Automatically downloaded via torchvision
+- **Large datasets** (ImageNet-1K, SUN397, Visual Genome): Downloaded and cached via HuggingFace datasets
+- **Special datasets** (TreeOfLife-10M): Supports multiple loading modes including WebDataset
 
-Most adapters default to the recommended mode for their dataset size. You can override this in the config if needed.
+For large datasets, the first run will download and cache the data locally, but subsequent runs will be much faster.
 
 ### Available Datasets
 
@@ -89,7 +90,6 @@ python evaluate.py config/sun397.yaml
 ```
 - **Dataset**: Automatically downloaded via HuggingFace
 - **Classes**: 397 scene categories (abbey, airport, alley, etc.)
-- **Image loading supports HuggingFace streaming mode (recommended)**
 
 #### ImageNet-1K (Original ILSVRC2012, 1000 classes, requires access approval)
 ```bash
@@ -98,7 +98,7 @@ python evaluate.py config/imagenet.yaml
 ```
 - **Dataset**: Original ImageNet-1K (ILSVRC2012) via HuggingFace (requires approval)
 - **Classes**: 1000 object categories from the ImageNet Large Scale Visual Recognition Challenge 2012
-- **Image loading supports HuggingFace streaming mode (recommended)**
+- **Note**: Full dataset will be downloaded and cached locally on first run
 
 #### Visual Genome (2000+ object types, complex scenes)
 ```bash
@@ -106,7 +106,6 @@ python evaluate.py config/visual_genome.yaml
 ```
 - **Dataset**: Automatically downloaded via HuggingFace
 - **Classes**: 2000+ unique object types in rich visual scenes
-- **Image loading supports HuggingFace streaming mode (recommended)**
 
 #### TreeOfLife-10M (Biological Taxa Classification)
 
@@ -316,7 +315,7 @@ Monitor your system resources and adjust:
   1. **Authentication**: `huggingface-cli login`
   2. **Dataset Access**: Request access to `imagenet-1k` on HuggingFace
 - **Image Loading**:
-  - Supports HuggingFace streaming (online) mode via the config
+  - Supports HuggingFace datasets for automatic downloading and caching
 
 #### Visual Genome
 - **Classes**: 2,000+ unique object types in rich visual scenes
